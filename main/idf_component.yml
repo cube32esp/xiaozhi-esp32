@@ -1,5 +1,10 @@
 ## IDF Component Manager Manifest File
 dependencies:
+  cube32esp/cube32_bsp:
+    version: "*"
+    override_path: ../../cube32_bsp
+    rules:
+    - if: target in [esp32s3]
   waveshare/esp_lcd_sh8601: 1.0.2
   espressif/esp_lcd_co5300: ^2.0.3
   espressif/esp_lcd_ili9341: ==1.2.0

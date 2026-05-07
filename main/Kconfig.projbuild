@@ -158,6 +158,20 @@ choice BOARD_TYPE
     config BOARD_TYPE_ESP_KORVO2_V3_RNDIS
         bool "Espressif Korvo2 V3 RNDIS"
         depends on IDF_TARGET_ESP32S3
+    config BOARD_TYPE_CUBE32_S3
+        bool "CUBE32 S3 (cube32esp)"
+        depends on IDF_TARGET_ESP32S3
+        select CUBE32_DISPLAY_ENABLED
+        select CUBE32_AUDIO_ENABLED
+        select CUBE32_PMU_ENABLED
+        select CUBE32_BLE_OTA_ENABLED
+        help
+            CUBE32-S3 board (cube32esp/cube32_bsp).
+            NOTE: BT_ENABLED and BT_NIMBLE_ENABLED are choice symbols and
+            cannot be set via `select`. Apply sdkconfig.defaults.cube32-s3
+            (or pass -DBOARD=cube32-s3 to idf.py) to enable NimBLE before
+            building. Camera/ADC button/touch can be toggled in
+            "Component config -> CUBE32 BSP".
     config BOARD_TYPE_ESP_SPARKBOT
         bool "Espressif SparkBot"
         depends on IDF_TARGET_ESP32S3

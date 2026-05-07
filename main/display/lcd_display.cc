@@ -90,7 +90,8 @@ LcdDisplay::LcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handle_
 }
 
 SpiLcdDisplay::SpiLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handle_t panel,
-                           int width, int height, int offset_x, int offset_y, bool mirror_x, bool mirror_y, bool swap_xy)
+                           int width, int height, int offset_x, int offset_y, bool mirror_x, bool mirror_y, bool swap_xy,
+                           bool swap_bytes)
     : LcdDisplay(panel_io, panel, width, height) {
 
     // draw white
@@ -154,7 +155,7 @@ SpiLcdDisplay::SpiLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_h
             .buff_dma = 1,
             .buff_spiram = 0,
             .sw_rotate = 0,
-            .swap_bytes = 1,
+            .swap_bytes = swap_bytes ? 1u : 0u,
             .full_refresh = 0,
             .direct_mode = 0,
         },

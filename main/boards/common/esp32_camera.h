@@ -21,8 +21,9 @@ struct JpegChunk
 
 class Esp32Camera : public Camera
 {
-private:
+protected:
     bool streaming_on_ = false;
+    bool owns_camera_ = false;  // True if this instance called esp_camera_init and must deinit
     bool swap_bytes_enabled_ = true;  // Swap pixel byte order for RGB565, enabled by default
     std::string explain_url_;
     std::string explain_token_;
@@ -30,6 +31,11 @@ private:
     camera_fb_t *current_fb_ = nullptr;
     uint8_t *encode_buf_ = nullptr;  // Buffer for JPEG encoding (with optional byte swap)
     size_t encode_buf_size_ = 0;
+
+    // Protected ctor for subclasses that do not own esp_camera_init (e.g.
+    // when an external BSP has already initialised the camera driver).
+    // Sets streaming_on_ = true so Capture() works immediately.
+    Esp32Camera();
 
 public:
     Esp32Camera(const camera_config_t &config);

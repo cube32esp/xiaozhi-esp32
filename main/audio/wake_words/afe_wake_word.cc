@@ -73,18 +73,27 @@ bool AfeWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) {
     afe_config_t* afe_config = afe_config_init(input_format.c_str(), models_, AFE_TYPE_SR, AFE_MODE_HIGH_PERF);
     afe_config->aec_init = codec_->input_reference();
     afe_config->aec_mode = AEC_MODE_SR_HIGH_PERF;
+    // AFE SE task placement:
+    //   Core 1: away from Wi-Fi (pri 23) + BT controller (pri 23) + LWIP (pri 18) on Core 0.
+    //   Priority 22: preempts NimBLE host (hardcoded configMAX_PRIORITIES-4 = 21) so the
+    //   FEED ring buffer drains immediately; NimBLE host runs freely between 30 ms bursts.
     afe_config->afe_perferred_core = 1;
-    afe_config->afe_perferred_priority = 1;
+    afe_config->afe_perferred_priority = 22;
     afe_config->memory_alloc_mode = AFE_MEMORY_ALLOC_MORE_PSRAM;
     
     afe_iface_ = esp_afe_handle_from_config(afe_config);
     afe_data_ = afe_iface_->create_from_config(afe_config);
 
-    xTaskCreate([](void* arg) {
+    // Pin fetch task to Core 1 at pri 23 (> AFE SE pri 22 > NimBLE host pri 21).
+    // SE writes processed chunks to the OUTPUT ring; this task must preempt SE
+    // immediately to drain it. If OUTPUT fills, SE blocks on its write → FEED ring
+    // backs up → AFE(FEED) full warnings. Each fetch+callback is <1 ms so NimBLE
+    // host runs freely for the remaining ~30 ms per chunk period.
+    xTaskCreatePinnedToCore([](void* arg) {
         auto this_ = (AfeWakeWord*)arg;
         this_->AudioDetectionTask();
         vTaskDelete(NULL);
-    }, "audio_detection", 4096, this, 3, nullptr);
+    }, "audio_detection", 4096, this, 23, nullptr, 1);
 
     return true;
 }

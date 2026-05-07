@@ -1,5 +1,6 @@
 #include "afe_audio_processor.h"
 #include <esp_log.h>
+#include <freertos/idf_additions.h>
 
 #define PROCESSOR_RUNNING 0x01
 
@@ -54,6 +55,11 @@ void AfeAudioProcessor::Initialize(AudioCodec* codec, int frame_duration_ms, srm
     }
 
     afe_config->agc_init = false;
+    // AFE SE task placement (see afe_wake_word.cc for full rationale):
+    //   Core 1: away from Wi-Fi/BT-controller/LWIP on Core 0.
+    //   Priority 22: preempts NimBLE host (pri 21) for prompt FEED ring drain.
+    afe_config->afe_perferred_core = 1;
+    afe_config->afe_perferred_priority = 22;
     afe_config->memory_alloc_mode = AFE_MEMORY_ALLOC_MORE_PSRAM;
 
 #ifdef CONFIG_USE_DEVICE_AEC
@@ -64,14 +70,25 @@ void AfeAudioProcessor::Initialize(AudioCodec* codec, int frame_duration_ms, srm
     afe_config->vad_init = true;
 #endif
 
-    afe_iface_ = esp_afe_handle_from_config(afe_config);
-    afe_data_ = afe_iface_->create_from_config(afe_config);
-    
-    xTaskCreate([](void* arg) {
+    // Create the fetch task BEFORE afe create_from_config so its stack can be
+    // allocated while internal SRAM is still plentiful. AFE init consumes most
+    // of the remaining internal heap and would otherwise leave <8KB free,
+    // causing xTaskCreate to fail with errCOULD_NOT_ALLOCATE_REQUIRED_MEMORY.
+    // Task body blocks on PROCESSOR_RUNNING (set in Start()) which is only
+    // raised after Initialize() finishes, so afe_data_ is guaranteed valid
+    // before any AFE call inside the task.
+    // Use xTaskCreatePinnedToCoreWithCaps so the stack goes to PSRAM — internal
+    // DRAM is too fragmented at this point to satisfy a contiguous 4KB request
+    // even when total free reports >14KB. TCB still goes to internal DRAM.
+    // Pin to Core 1 at pri 23. Name <= 15 chars (CONFIG_FREERTOS_MAX_TASK_NAME_LEN=16).
+    xTaskCreatePinnedToCoreWithCaps([](void* arg) {
         auto this_ = (AfeAudioProcessor*)arg;
         this_->AudioProcessorTask();
-        vTaskDelete(NULL);
-    }, "audio_communication", 4096, this, 3, NULL);
+        vTaskDeleteWithCaps(NULL);
+    }, "audio_comm", 4096, this, 23, NULL, 1, MALLOC_CAP_SPIRAM);
+
+    afe_iface_ = esp_afe_handle_from_config(afe_config);
+    afe_data_ = afe_iface_->create_from_config(afe_config);
 }
 
 AfeAudioProcessor::~AfeAudioProcessor() {
@@ -133,6 +150,8 @@ void AfeAudioProcessor::OnVadStateChange(std::function<void(bool speaking)> call
 }
 
 void AfeAudioProcessor::AudioProcessorTask() {
+    // Wait for first Start() so afe_data_ is guaranteed initialised.
+    xEventGroupWaitBits(event_group_, PROCESSOR_RUNNING, pdFALSE, pdTRUE, portMAX_DELAY);
     auto fetch_size = afe_iface_->get_fetch_chunksize(afe_data_);
     auto feed_size = afe_iface_->get_feed_chunksize(afe_data_);
     ESP_LOGI(TAG, "Audio communication task started, feed size: %d fetch size: %d",

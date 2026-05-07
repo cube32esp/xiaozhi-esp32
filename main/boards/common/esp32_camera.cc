@@ -17,6 +17,13 @@
 
 #define TAG "Esp32Camera"
 
+Esp32Camera::Esp32Camera() {
+    // No esp_camera_init here — assumes external BSP already initialised the
+    // camera driver. Subclass is responsible for ensuring the driver is up.
+    streaming_on_ = true;
+    owns_camera_ = false;
+}
+
 Esp32Camera::Esp32Camera(const camera_config_t &config) {
     esp_err_t err = esp_camera_init(&config);
     if (err != ESP_OK) {
@@ -33,6 +40,7 @@ Esp32Camera::Esp32Camera(const camera_config_t &config) {
     }
 
     streaming_on_ = true;
+    owns_camera_ = true;
 }
 
 Esp32Camera::~Esp32Camera() {
@@ -46,7 +54,9 @@ Esp32Camera::~Esp32Camera() {
             encode_buf_ = nullptr;
             encode_buf_size_ = 0;
         }
-        esp_camera_deinit();
+        if (owns_camera_) {
+            esp_camera_deinit();
+        }
         streaming_on_ = false;
     }
 }
