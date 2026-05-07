@@ -1,0 +1,48 @@
+{
+    "target": "esp32s3",
+    "builds": [
+        {
+            "name": "cube32-s3",
+            "sdkconfig_append": [
+                "CONFIG_BOARD_TYPE_CUBE32_S3=y",
+                "CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y",
+
+                "CONFIG_CUBE32_BOARD_S3_CORE=y",
+                "CONFIG_CUBE32_DISPLAY_ENABLED=y",
+                "CONFIG_CUBE32_DISPLAY_CUBE_TFT_TOUCH_154=y",
+                "CONFIG_CUBE32_LVGL_ENABLED=n",
+                "CONFIG_CUBE32_TOUCH_ENABLED=n",
+                "CONFIG_CUBE32_AUDIO_ENABLED=y",
+                "CONFIG_CUBE32_AUDIO_AEC_NONE=y",
+                "CONFIG_CUBE32_CAMERA_ENABLED=y",
+                "CONFIG_CUBE32_ADC_BUTTON_ENABLED=y",
+                "CONFIG_CUBE32_PMU_ENABLED=y",
+                "CONFIG_CUBE32_RTC_ENABLED=n",
+                "CONFIG_CUBE32_BLE_OTA_ENABLED=y",
+                "CONFIG_CUBE32_BLE_OTA_DOUBLE_BOOT_ENABLE=y",
+                "CONFIG_CUBE32_BLE_OTA_MTU_SIZE=512",
+
+                "CONFIG_CAMERA_NO_AFFINITY=y",
+                "CONFIG_CAMERA_DMA_BUFFER_SIZE_MAX=8192",
+                "CONFIG_CODEC_I2C_BACKWARD_COMPATIBLE=n",
+
+                "CONFIG_BT_ENABLED=y",
+                "CONFIG_BT_NIMBLE_ENABLED=y",
+                "CONFIG_BT_BLUEDROID_ENABLED=n",
+                "CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=y",
+                "CONFIG_BT_NIMBLE_ROLE_BROADCASTER=y",
+                "CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1",
+                "CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_INTERNAL=y",
+                "CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=512",
+                "CONFIG_BT_NIMBLE_TRANSPORT_ACL_SIZE=512",
+                "CONFIG_BT_NIMBLE_MSYS_1_BLOCK_COUNT=24",
+                "CONFIG_BT_NIMBLE_MSYS_2_BLOCK_COUNT=32",
+                "CONFIG_USE_ESP_BLUFI_WIFI_PROVISIONING=n",
+
+                "CONFIG_LV_FONT_MONTSERRAT_10=y",
+                "CONFIG_LV_FONT_MONTSERRAT_20=y",
+                "CONFIG_LV_FONT_MONTSERRAT_24=y"
+            ]
+        }
+    ]
+}

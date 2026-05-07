@@ -1,0 +1,112 @@
+# CUBE32-S3 (cube32esp BSP) board sdkconfig fragment
+#
+# This file is NOT auto-applied by ESP-IDF. To use it for local development:
+#   1. idf.py set-target esp32s3
+#   2. idf.py menuconfig  -> Xiaozhi Assistant -> Board -> "CUBE32 S3 (cube32esp)"
+#      (this will auto-select NimBLE + cube32 display/audio/PMU/BLE-OTA via
+#       the `select` rules in main/Kconfig.projbuild).
+#   3. Optionally merge the entries below into the generated `sdkconfig` for
+#      the optional features (camera DMA, BLE MTU tuning, LVGL fonts...).
+#
+# Release builds use the `sdkconfig_append` list in this directory's
+# config.json — those entries override anything here.
+#
+# Settings already provided by the project root sdkconfig.defaults / .esp32s3
+# are NOT repeated here — only deltas required for cube32-s3.
+
+# ---------------------------------------------------------------------------
+# Board selection (also auto-set by `idf.py menuconfig`).
+# ---------------------------------------------------------------------------
+CONFIG_BOARD_TYPE_CUBE32_S3=y
+CONFIG_IDF_TARGET="esp32s3"
+
+# ---------------------------------------------------------------------------
+# Partition table — use the xiaozhi project standard 16 MB layout.
+# (The root sdkconfig.defaults already sets partitions/v2/16m.csv; this
+#  entry keeps the 16 MB flash size without overriding the csv path.)
+# ---------------------------------------------------------------------------
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+
+# ---------------------------------------------------------------------------
+# CUBE32 BSP feature matrix (Phase 1)
+# ---------------------------------------------------------------------------
+CONFIG_CUBE32_BOARD_S3_CORE=y
+
+CONFIG_CUBE32_DISPLAY_ENABLED=y
+# Pick ONE LCD physical panel. Default to 1.54" 240x240; switch to
+# CUBE32_DISPLAY_CUBE_TFT_TOUCH_200 for the 2.0" 240x320 module.
+CONFIG_CUBE32_DISPLAY_CUBE_TFT_TOUCH_154=y
+
+# LVGL is owned by xiaozhi (SpiLcdDisplay) — keep cube32's LVGL driver OFF.
+CONFIG_CUBE32_LVGL_ENABLED=n
+CONFIG_CUBE32_TOUCH_ENABLED=n
+
+CONFIG_CUBE32_AUDIO_ENABLED=y
+# AEC handled by xiaozhi audio pipeline — cube32 codec runs without HW AEC.
+CONFIG_CUBE32_AUDIO_AEC_NONE=y
+
+CONFIG_CUBE32_CAMERA_ENABLED=y
+CONFIG_CUBE32_ADC_BUTTON_ENABLED=y
+CONFIG_CUBE32_PMU_ENABLED=y
+CONFIG_CUBE32_RTC_ENABLED=n
+
+CONFIG_CUBE32_BLE_OTA_ENABLED=y
+CONFIG_CUBE32_BLE_OTA_DOUBLE_BOOT_ENABLE=y
+CONFIG_CUBE32_BLE_OTA_MTU_SIZE=512
+
+# Disabled subsystems
+CONFIG_CUBE32_MODEM_ENABLED=n
+CONFIG_CUBE32_ROBOT_HEAD_ENABLED=n
+CONFIG_CUBE32_FACE_EXPRESSION_ENABLED=n
+CONFIG_CUBE32_SERVO_ENABLED=n
+CONFIG_CUBE32_IMU_ENABLED=n
+CONFIG_CUBE32_MAG_ENABLED=n
+CONFIG_CUBE32_USB_INPUT_ENABLED=n
+CONFIG_CUBE32_SDCARD_ENABLED=n
+
+# Adjust Default Settings
+CONFIG_CUBE32_AUDIO_INPUT_SAMPLE_RATE=24000
+CONFIG_CUBE32_BLE_OTA_DOUBLE_BOOT_ENABLE=n
+
+# ---------------------------------------------------------------------------
+# Camera — DMA chunk MUST divide camera frame line size evenly.
+# 8192 is the proven safe value for CUBE32 OV2640 (QQVGA/QVGA RGB565).
+# Larger values (e.g. 32768) cause `cam_hal: FB-SIZE: X != Y` mismatches and
+# capture timeouts.
+# ---------------------------------------------------------------------------
+CONFIG_CAMERA_NO_AFFINITY=y
+CONFIG_CAMERA_DMA_BUFFER_SIZE_MAX=8192
+
+# ---------------------------------------------------------------------------
+# Audio codec I2C — cube32 uses the new (non-backward-compat) codec_dev API.
+# ---------------------------------------------------------------------------
+CONFIG_CODEC_I2C_BACKWARD_COMPATIBLE=n
+
+# ---------------------------------------------------------------------------
+# Bluetooth — NimBLE required by cube32 BLE OTA. xiaozhi BLUFI not used.
+# ---------------------------------------------------------------------------
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_BLUEDROID_ENABLED=n
+CONFIG_BT_NIMBLE_ROLE_PERIPHERAL=y
+CONFIG_BT_NIMBLE_ROLE_BROADCASTER=y
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
+CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL=y
+CONFIG_BT_NIMBLE_PINNED_TO_CORE_1=y
+
+# BLE OTA speed optimisation
+CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=512
+CONFIG_BT_NIMBLE_TRANSPORT_ACL_SIZE=512
+CONFIG_BT_NIMBLE_MSYS_1_BLOCK_COUNT=24
+CONFIG_BT_NIMBLE_MSYS_2_BLOCK_COUNT=32
+
+# Disable xiaozhi's BLUFI WiFi provisioning — cube32 uses its own BLE OTA app.
+CONFIG_USE_ESP_BLUFI_WIFI_PROVISIONING=n
+
+# ---------------------------------------------------------------------------
+# LVGL fonts required by cube32 ble_ota_ui.cpp (drawn during BLE OTA).
+# These run inside xiaozhi's LVGL display, so the fonts must exist.
+# ---------------------------------------------------------------------------
+CONFIG_LV_FONT_MONTSERRAT_10=y
+CONFIG_LV_FONT_MONTSERRAT_20=y
+CONFIG_LV_FONT_MONTSERRAT_24=y
