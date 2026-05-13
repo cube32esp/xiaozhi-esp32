@@ -1,6 +1,7 @@
 #include "sdkconfig.h"
 
 #include <esp_heap_caps.h>
+#include <esp_pthread.h>
 #include <cstdio>
 #include <cstring>
 #include <esp_log.h>
@@ -172,13 +173,19 @@ std::string Esp32Camera::Explain(const std::string &question) {
     }
 
     // Create local JPEG queue
-    QueueHandle_t jpeg_queue = xQueueCreate(40, sizeof(JpegChunk));
+    QueueHandle_t jpeg_queue = xQueueCreate(8, sizeof(JpegChunk));
     if (jpeg_queue == nullptr) {
         ESP_LOGE(TAG, "Failed to create JPEG queue");
         throw std::runtime_error("Failed to create JPEG queue");
     }
 
-    // Start encoding thread
+    // Start encoding thread — allocate stack from PSRAM to avoid exhausting internal SRAM
+    {
+        esp_pthread_cfg_t tcfg = esp_pthread_get_default_config();
+        tcfg.stack_size = 4096;
+        tcfg.stack_alloc_caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
+        esp_pthread_set_cfg(&tcfg);
+    }
     encoder_thread_ = std::thread([this, jpeg_queue]() {
         int64_t start_time = esp_timer_get_time();
         uint16_t w = current_fb_->width;
@@ -243,6 +250,11 @@ std::string Esp32Camera::Explain(const std::string &question) {
         ESP_LOGI(TAG, "JPEG encoding time: %ld ms", int((end_time - start_time) / 1000));
     });
 
+    ESP_LOGI(TAG, "HTTP upload: free_heap=%lu internal_heap=%lu psram=%lu",
+             (unsigned long)esp_get_free_heap_size(),
+             (unsigned long)esp_get_free_internal_heap_size(),
+             (unsigned long)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+
     auto network = Board::GetInstance().GetNetwork();
     auto http = network->CreateHttp(3);
     std::string boundary = "----ESP32_CAMERA_BOUNDARY";
@@ -275,7 +287,9 @@ std::string Esp32Camera::Explain(const std::string &question) {
         question_field += "Content-Disposition: form-data; name=\"question\"\r\n";
         question_field += "\r\n";
         question_field += question + "\r\n";
-        http->Write(question_field.c_str(), question_field.size());
+        int wr = http->Write(question_field.c_str(), question_field.size());
+        ESP_LOGI(TAG, "Write question field: %d bytes -> ret=%d", (int)question_field.size(), wr);
+        if (wr < 0) throw std::runtime_error("HTTP write failed (question field)");
     }
     {
         std::string file_header;
@@ -283,7 +297,9 @@ std::string Esp32Camera::Explain(const std::string &question) {
         file_header += "Content-Disposition: form-data; name=\"file\"; filename=\"camera.jpg\"\r\n";
         file_header += "Content-Type: image/jpeg\r\n";
         file_header += "\r\n";
-        http->Write(file_header.c_str(), file_header.size());
+        int wr = http->Write(file_header.c_str(), file_header.size());
+        ESP_LOGI(TAG, "Write file header: %d bytes -> ret=%d", (int)file_header.size(), wr);
+        if (wr < 0) throw std::runtime_error("HTTP write failed (file header)");
     }
 
     size_t total_sent = 0;
@@ -298,7 +314,12 @@ std::string Esp32Camera::Explain(const std::string &question) {
             saw_terminator = true;
             break;
         }
-        http->Write((const char *)chunk.data, chunk.len);
+        int wr = http->Write((const char *)chunk.data, chunk.len);
+        if (wr < 0) {
+            ESP_LOGE(TAG, "HTTP write failed for JPEG chunk (len=%zu, ret=%d)", chunk.len, wr);
+            heap_caps_free(chunk.data);
+            throw std::runtime_error("HTTP write failed (JPEG chunk)");
+        }
         total_sent += chunk.len;
         heap_caps_free(chunk.data);
     }
@@ -310,12 +331,20 @@ std::string Esp32Camera::Explain(const std::string &question) {
         throw std::runtime_error("Failed to encode image to JPEG");
     }
 
+    ESP_LOGI(TAG, "JPEG data written: total_sent=%d bytes", (int)total_sent);
     {
         std::string multipart_footer;
         multipart_footer += "\r\n--" + boundary + "--\r\n";
-        http->Write(multipart_footer.c_str(), multipart_footer.size());
+        int wr = http->Write(multipart_footer.c_str(), multipart_footer.size());
+        ESP_LOGI(TAG, "Write multipart footer: %d bytes -> ret=%d", (int)multipart_footer.size(), wr);
+        if (wr < 0) throw std::runtime_error("HTTP write failed (multipart footer)");
     }
-    http->Write("", 0);
+    {
+        int wr = http->Write("", 0);
+        ESP_LOGI(TAG, "Write final chunk terminator -> ret=%d", wr);
+        if (wr < 0) throw std::runtime_error("HTTP write failed (final terminator)");
+    }
+    ESP_LOGI(TAG, "All data sent to server, waiting for HTTP response...");
 
     if (http->GetStatusCode() != 200) {
         ESP_LOGE(TAG, "Failed to upload photo, status code: %d", http->GetStatusCode());

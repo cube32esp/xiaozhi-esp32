@@ -1,0 +1,42 @@
+# CUBE32-S3 4G modem overlay
+#
+# Merge on top of sdkconfig.defaults.cube32-s3 for LTE modem builds:
+#
+#   idf.py set-target esp32s3
+#   # Merge base defaults then this overlay into sdkconfig, or set manually
+#   # via menuconfig: Component config → CUBE32 BSP → Modem Configuration
+#
+# After flashing, the CUBE32 Mobile App or the MCP voice command
+#   "self.cube32.set_network_mode(mode=wifi)"
+# can toggle back to WiFi without reflashing.
+
+# Enable the A7670 LTE modem driver.
+CONFIG_CUBE32_MODEM_ENABLED=y
+
+# A7670 connects via USB CDC-ACM (SimCom USB VID=0x1E0E PID=0x9011).
+# BSP mutex: USB modem and USB input cannot share the USB bus simultaneously.
+CONFIG_CUBE32_USB_INPUT_ENABLED=n
+
+# ---------------------------------------------------------------------------
+# PPP stack — required for ESP_NETIF_DEFAULT_PPP() in a7670_modem.cpp
+# (ESP_NETIF_DEFAULT_PPP is gated on CONFIG_PPP_SUPPORT in esp_netif_defaults.h)
+# ---------------------------------------------------------------------------
+CONFIG_PPP_SUPPORT=y
+CONFIG_PPP_PAP_SUPPORT=y
+CONFIG_PPP_CHAP_SUPPORT=y
+CONFIG_PPP_MSCHAP_SUPPORT=y
+CONFIG_PPP_MPPE_SUPPORT=y
+
+# esp_modem component — flow control and CMUX robustness
+CONFIG_ESP_MODEM_ADD_FLOW_CONTROL=y
+CONFIG_ESP_MODEM_CMUX_DEFRAGMENT_PAYLOAD=y
+CONFIG_ESP_MODEM_PPP_SERVER_SUPPORT=y
+
+# ---------------------------------------------------------------------------
+# USB Host — required for A7670 USB CDC-ACM interface
+# TinyUSB (USB Device) MUST be disabled — it conflicts with USB Host.
+# ---------------------------------------------------------------------------
+CONFIG_TINYUSB_ENABLED=n
+CONFIG_USB_OTG_SUPPORTED=y
+CONFIG_USB_HOST_CONTROL_TRANSFER_MAX_SIZE=1024
+CONFIG_USB_HOST_HW_BUFFER_BIAS_BALANCED=y

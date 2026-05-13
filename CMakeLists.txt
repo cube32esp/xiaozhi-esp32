@@ -15,10 +15,21 @@ if(DEFINED BOARD AND NOT BOARD STREQUAL "")
         "${CMAKE_CURRENT_LIST_DIR}/main/boards/*/*/sdkconfig.defaults.${BOARD}")
     if(_board_fragment)
         list(GET _board_fragment 0 _board_fragment_file)
-        set(SDKCONFIG_DEFAULTS
-            "${CMAKE_CURRENT_LIST_DIR}/sdkconfig.defaults"
-            "${_board_fragment_file}")
-        message(STATUS "[board] '${BOARD}': loading sdkconfig fragment ${_board_fragment_file}")
+        # Support "base.variant" board names (e.g. "cube32-s3.4g"):
+        # strip the last dot-suffix to find a base board fragment and load it first,
+        # so the variant only needs to specify delta settings.
+        string(REGEX REPLACE "\\.[^.]*$" "" _base_board "${BOARD}")
+        if(NOT _base_board STREQUAL BOARD)
+            file(GLOB_RECURSE _base_fragment
+                "${CMAKE_CURRENT_LIST_DIR}/main/boards/*/*/sdkconfig.defaults.${_base_board}")
+        endif()
+        set(SDKCONFIG_DEFAULTS "${CMAKE_CURRENT_LIST_DIR}/sdkconfig.defaults")
+        if(_base_fragment)
+            list(GET _base_fragment 0 _base_fragment_file)
+            list(APPEND SDKCONFIG_DEFAULTS "${_base_fragment_file}")
+        endif()
+        list(APPEND SDKCONFIG_DEFAULTS "${_board_fragment_file}")
+        message(STATUS "[board] '${BOARD}': loading sdkconfig defaults: ${SDKCONFIG_DEFAULTS}")
     else()
         message(WARNING "[board] '${BOARD}': no sdkconfig fragment found under main/boards/")
     endif()

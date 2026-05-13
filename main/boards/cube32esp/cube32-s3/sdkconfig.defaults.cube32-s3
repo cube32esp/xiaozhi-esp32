@@ -37,9 +37,21 @@ CONFIG_CUBE32_DISPLAY_ENABLED=y
 # CUBE32_DISPLAY_CUBE_TFT_TOUCH_200 for the 2.0" 240x320 module.
 CONFIG_CUBE32_DISPLAY_CUBE_TFT_TOUCH_154=y
 
-# LVGL is owned by xiaozhi (SpiLcdDisplay) — keep cube32's LVGL driver OFF.
-CONFIG_CUBE32_LVGL_ENABLED=n
+# LVGL is now owned by cube32 BSP (Mode B) — cube32 calls lv_init +
+# lvgl_port_init + lvgl_port_add_disp; xiaozhi attaches via
+# Cube32AttachedLcdDisplay.  Set Mode A by flipping this back to =n.
+CONFIG_CUBE32_LVGL_ENABLED=y
 CONFIG_CUBE32_TOUCH_ENABLED=n
+# Match Mode A task priority so audio task scheduling is unchanged.
+CONFIG_CUBE32_LVGL_TASK_PRIORITY=1
+CONFIG_CUBE32_LVGL_DOUBLE_BUFFER=y
+# Draw buffers must be in internal DMA RAM — SPIRAM draw buffers require the
+# spi_master to allocate a priv TX bounce buffer from internal heap, which
+# fails when xiaozhi's audio pipelines have already consumed available
+# contiguous internal RAM.  The image cache (PNG/GIF frames) is sized into
+# PSRAM separately inside cube32::LvglDisplay::addDisplay() whenever
+# CONFIG_SPIRAM is set, regardless of this flag.
+CONFIG_CUBE32_LVGL_USE_SPIRAM=n
 
 CONFIG_CUBE32_AUDIO_ENABLED=y
 # AEC handled by xiaozhi audio pipeline — cube32 codec runs without HW AEC.
@@ -48,13 +60,15 @@ CONFIG_CUBE32_AUDIO_AEC_NONE=y
 CONFIG_CUBE32_CAMERA_ENABLED=y
 CONFIG_CUBE32_ADC_BUTTON_ENABLED=y
 CONFIG_CUBE32_PMU_ENABLED=y
-CONFIG_CUBE32_RTC_ENABLED=n
+CONFIG_CUBE32_RTC_ENABLED=y
 
 CONFIG_CUBE32_BLE_OTA_ENABLED=y
 CONFIG_CUBE32_BLE_OTA_DOUBLE_BOOT_ENABLE=y
 CONFIG_CUBE32_BLE_OTA_MTU_SIZE=512
 
 # Disabled subsystems
+# NOTE: to enable A7670 LTE modem, merge sdkconfig.defaults.cube32-s3.4g on
+# top of this file (sets CONFIG_CUBE32_MODEM_ENABLED=y and disables USB input).
 CONFIG_CUBE32_MODEM_ENABLED=n
 CONFIG_CUBE32_ROBOT_HEAD_ENABLED=n
 CONFIG_CUBE32_FACE_EXPRESSION_ENABLED=n

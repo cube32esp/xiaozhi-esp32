@@ -84,7 +84,7 @@ bool AfeWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) {
     afe_iface_ = esp_afe_handle_from_config(afe_config);
     afe_data_ = afe_iface_->create_from_config(afe_config);
 
-    // Pin fetch task to Core 1 at pri 23 (> AFE SE pri 22 > NimBLE host pri 21).
+    /*// Pin fetch task to Core 1 at pri 23 (> AFE SE pri 22 > NimBLE host pri 21).
     // SE writes processed chunks to the OUTPUT ring; this task must preempt SE
     // immediately to drain it. If OUTPUT fills, SE blocks on its write → FEED ring
     // backs up → AFE(FEED) full warnings. Each fetch+callback is <1 ms so NimBLE
@@ -93,7 +93,22 @@ bool AfeWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) {
         auto this_ = (AfeWakeWord*)arg;
         this_->AudioDetectionTask();
         vTaskDelete(NULL);
-    }, "audio_detection", 4096, this, 23, nullptr, 1);
+    }, "audio_detection", 4096, this, 23, nullptr, 1);*/
+
+    // Use xTaskCreatePinnedToCoreWithCaps so the 4KB stack goes to PSRAM.
+    // Plain xTaskCreatePinnedToCore allocates the stack from internal DRAM;
+    // after create_from_config() has consumed most remaining contiguous
+    // internal heap this allocation fails silently, the task never starts,
+    // fetch_with_delay is never called, and the AFE FEED ring buffer fills.
+    // afe_data_ is already valid here so no event-group guard is needed.
+    BaseType_t rc = xTaskCreatePinnedToCoreWithCaps([](void* arg) {
+        auto this_ = (AfeWakeWord*)arg;
+        this_->AudioDetectionTask();
+        vTaskDeleteWithCaps(NULL);
+    }, "audio_detection", 4096, this, 23, nullptr, 1, MALLOC_CAP_SPIRAM);
+    if (rc != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create audio_detection task (err=%d) — AFE FEED will overflow", rc);
+    }
 
     return true;
 }
