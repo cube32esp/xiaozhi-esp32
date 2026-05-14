@@ -22,6 +22,9 @@
 #ifdef CONFIG_CUBE32_LVGL_ENABLED
 #include "cube32_lvgl_display.h"
 #endif
+#if defined(CONFIG_CUBE32_LVGL_ENABLED) && defined(CONFIG_CUBE32_FACE_EXPRESSION_ENABLED)
+#include "cube32_face_display.h"
+#endif
 
 #include "mcp_server.h"
 #include <ssid_manager.h>
@@ -105,8 +108,20 @@ private:
         // lvgl_port_add_disp + lv_display_set_default + setRotation + backlight.
         // We only need to attach xiaozhi's LcdDisplay stack to the existing
         // lv_display_t.
+#if defined(CONFIG_CUBE32_FACE_EXPRESSION_ENABLED)
+        if (Cube32FaceDisplay::IsFaceModeEnabled()) {
+            ESP_LOGI(TAG, "Display: face expression mode");
+            display_ = new Cube32FaceDisplay(
+                st.getIOHandle(), st.getPanelHandle(), w, h);
+        } else {
+            ESP_LOGI(TAG, "Display: chat mode");
+            display_ = new Cube32AttachedLcdDisplay(
+                st.getIOHandle(), st.getPanelHandle(), w, h);
+        }
+#else
         display_ = new Cube32AttachedLcdDisplay(
             st.getIOHandle(), st.getPanelHandle(), w, h);
+#endif
 #else
         // ---- Mode A: xiaozhi's SpiLcdDisplay owns LVGL -----------------------
         // cube32 deliberately keeps the panel OFF until the first frame is
@@ -245,6 +260,31 @@ private:
                     : "Switching to WiFi, rebooting...");
             });
 #endif  // CONFIG_CUBE32_MODEM_ENABLED
+
+#if defined(CONFIG_CUBE32_LVGL_ENABLED) && defined(CONFIG_CUBE32_FACE_EXPRESSION_ENABLED)
+        // Switch between chat UI and face expression mode — persists to NVS, reboots.
+        mcp.AddUserOnlyTool(
+            "self.cube32.set_display_mode",
+            "Switch the CUBE32 display between normal chat UI and face expression mode. "
+            "The selection is saved and takes effect after the device restarts.",
+            PropertyList({
+                Property("mode", kPropertyTypeString)  // required: "chat" or "face"
+            }),
+            [](const PropertyList& props) -> ReturnValue {
+                bool face = (props["mode"].value<std::string>() == "face");
+                Cube32FaceDisplay::SetFaceMode(face);
+                auto& app = Application::GetInstance();
+                app.Schedule([&app, face]() {
+                    ESP_LOGW(TAG, "Display mode set to %s — rebooting",
+                             face ? "face" : "chat");
+                    vTaskDelay(pdMS_TO_TICKS(1000));
+                    app.Reboot();
+                });
+                return std::string(face
+                    ? "Switching to face expression mode, rebooting..."
+                    : "Switching to chat mode, rebooting...");
+            });
+#endif  // CONFIG_CUBE32_LVGL_ENABLED && CONFIG_CUBE32_FACE_EXPRESSION_ENABLED
 
         // Restart the device.
         mcp.AddUserOnlyTool(
