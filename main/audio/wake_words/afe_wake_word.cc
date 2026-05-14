@@ -274,6 +274,9 @@ void AfeWakeWord::EncodeWakeWordData() {
         }
         vTaskDelete(NULL);
     }, "encode_wake_word", stack_size, this, 2, wake_word_encode_task_stack_, wake_word_encode_task_buffer_);
+    if (wake_word_encode_task_ == nullptr) {
+        ESP_LOGE(TAG, "Failed to create encode_wake_word task");
+    }
 }
 
 bool AfeWakeWord::GetWakeWordOpus(std::vector<uint8_t>& opus) {

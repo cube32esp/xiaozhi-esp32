@@ -38,7 +38,9 @@ void Cube32ModemNetwork::SetModemActive(bool active) {
 
 void Cube32ModemNetwork::StartAsync(NetworkEventCallback event_cb) {
     m_event_cb_ = std::move(event_cb);
-    xTaskCreate(ModemTaskEntry, "modem_net", 4096, this, 5, nullptr);
+    if (xTaskCreate(ModemTaskEntry, "modem_net", 4096, this, 5, nullptr) != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create modem_net task");
+    }
 }
 
 void Cube32ModemNetwork::ModemTaskEntry(void* arg) {

@@ -81,11 +81,13 @@ void AfeAudioProcessor::Initialize(AudioCodec* codec, int frame_duration_ms, srm
     // DRAM is too fragmented at this point to satisfy a contiguous 4KB request
     // even when total free reports >14KB. TCB still goes to internal DRAM.
     // Pin to Core 1 at pri 23. Name <= 15 chars (CONFIG_FREERTOS_MAX_TASK_NAME_LEN=16).
-    xTaskCreatePinnedToCoreWithCaps([](void* arg) {
+    if (xTaskCreatePinnedToCoreWithCaps([](void* arg) {
         auto this_ = (AfeAudioProcessor*)arg;
         this_->AudioProcessorTask();
-        vTaskDeleteWithCaps(NULL);
-    }, "audio_comm", 4096, this, 23, NULL, 1, MALLOC_CAP_SPIRAM);
+        vTaskDelete(NULL);  // idle task handles PSRAM stack cleanup safely
+    }, "audio_comm", 4096, this, 23, NULL, 1, MALLOC_CAP_SPIRAM) != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create audio_comm task");
+    }
 
     afe_iface_ = esp_afe_handle_from_config(afe_config);
     afe_data_ = afe_iface_->create_from_config(afe_config);

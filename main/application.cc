@@ -12,10 +12,12 @@
 
 #include <cstring>
 #include <esp_log.h>
+#include <esp_heap_caps.h>
 #include <cJSON.h>
 #include <driver/gpio.h>
 #include <arpa/inet.h>
 #include <font_awesome.h>
+#include <freertos/idf_additions.h>
 
 #define TAG "Application"
 
@@ -270,12 +272,31 @@ void Application::HandleNetworkConnectedEvent() {
             return;
         }
 
-        xTaskCreate([](void* arg) {
+        // Activation task constraints on CUBE32-S3:
+        //   - Stack must be in INTERNAL DRAM (CheckAssetsVersion calls
+        //     esp_partition_mmap which freezes the cache; a PSRAM stack is
+        //     inaccessible during the freeze).
+        //   - Cannot pre-reserve at boot — USB Host's EP allocator also needs
+        //     contiguous internal DMA SRAM and would fail with ESP_ERR_NO_MEM.
+        //   - At network-connect time the internal heap is fragmented; an 8 KB
+        //     contiguous block is unlikely. Use 4 KB and log diagnostics so we
+        //     can adjust if either creation fails or stack overflows.
+        const size_t kActivationStackBytes = 4096;
+        size_t largest_internal = heap_caps_get_largest_free_block(
+            MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        ESP_LOGI(TAG, "Activation task: requesting %u byte stack, largest free internal block = %u",
+                 (unsigned)kActivationStackBytes, (unsigned)largest_internal);
+
+        if (xTaskCreatePinnedToCoreWithCaps([](void* arg) {
             Application* app = static_cast<Application*>(arg);
             app->ActivationTask();
             app->activation_task_handle_ = nullptr;
-            vTaskDelete(NULL);
-        }, "activation", 4096 * 2, this, 2, &activation_task_handle_);
+            vTaskDeleteWithCaps(NULL);
+        }, "activation", kActivationStackBytes, this, 2, &activation_task_handle_,
+           tskNO_AFFINITY, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) != pdPASS) {
+            ESP_LOGE(TAG, "Failed to create activation task (largest internal block = %u)",
+                     (unsigned)largest_internal);
+        }
     }
 
     // Update the status bar immediately to show the network state

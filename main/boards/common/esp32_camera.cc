@@ -223,6 +223,27 @@ std::string Esp32Camera::Explain(const std::string &question) {
             jpeg_src_len = encode_buf_size_;
         }
 
+        // If the camera already delivers JPEG, pass the buffer directly without
+        // re-encoding. image_to_jpeg_cb only handles raw formats (RGB565, YUV…).
+        if (current_fb_->format == PIXFORMAT_JPEG) {
+            JpegChunk chunk = {.data = nullptr, .len = jpeg_src_len};
+            chunk.data = (uint8_t*)heap_caps_aligned_alloc(16, jpeg_src_len, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            if (chunk.data == nullptr) {
+                ESP_LOGE(TAG, "Failed to allocate %zu bytes for JPEG passthrough", jpeg_src_len);
+                chunk.len = 0;
+            } else {
+                memcpy(chunk.data, jpeg_src_buf, jpeg_src_len);
+            }
+            xQueueSend(jpeg_queue, &chunk, portMAX_DELAY);
+            // Send sentinel to signal end of stream
+            JpegChunk sentinel = {.data = nullptr, .len = 0};
+            xQueueSend(jpeg_queue, &sentinel, portMAX_DELAY);
+            int64_t end_time = esp_timer_get_time();
+            ESP_LOGI(TAG, "JPEG passthrough time: %ld ms, len=%zu",
+                     int((end_time - start_time) / 1000), jpeg_src_len);
+            return;
+        }
+
         bool ok = image_to_jpeg_cb(jpeg_src_buf, jpeg_src_len, w, h, enc_fmt, 80,
             [](void* arg, size_t index, const void* data, size_t len) -> size_t {
                 auto jpeg_queue = static_cast<QueueHandle_t>(arg);

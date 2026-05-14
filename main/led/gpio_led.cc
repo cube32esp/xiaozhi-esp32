@@ -82,8 +82,10 @@ GpioLed::GpioLed(gpio_num_t gpio, int output_invert, ledc_timer_t timer_num, led
     };
     ESP_ERROR_CHECK(esp_timer_create(&blink_timer_args, &blink_timer_));
 
-    xTaskCreate(EventTask, "LedEvent", 2048, this, 
-            tskIDLE_PRIORITY + 2, &event_task_handle_);
+    if (xTaskCreate(EventTask, "LedEvent", 2048, this,
+            tskIDLE_PRIORITY + 2, &event_task_handle_) != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create LedEvent task");
+    }
 
     ledc_initialized_ = true;
 }
