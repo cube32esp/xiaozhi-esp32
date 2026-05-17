@@ -365,8 +365,15 @@ public:
             modem_net_.StartAsync(network_callback_);
             return;
         }
-        // Modem built but not active/present: forward stored callback then start WiFi.
-        WifiBoard::SetNetworkEventCallback(std::move(network_callback_));
+        // Modem built but not present/active: fall back to WiFi.
+        // Only forward network_callback_ if it was deferred by SetNetworkEventCallback
+        // (i.e. ShouldUseModem() was true at that call).  When ShouldUseModem() was
+        // already false at SetNetworkEventCallback time, the callback was forwarded
+        // directly to WifiBoard then — forwarding an empty network_callback_ here would
+        // silently overwrite it and drop all WiFi events, hanging Application::Run().
+        if (network_callback_) {
+            WifiBoard::SetNetworkEventCallback(std::move(network_callback_));
+        }
         SyncCube32WiFiCredentials_();
         WifiBoard::StartNetwork();
     }
