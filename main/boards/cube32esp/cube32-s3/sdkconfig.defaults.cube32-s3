@@ -1,18 +1,12 @@
 # CUBE32-S3 (cube32esp BSP) board sdkconfig fragment
 #
-# This file is NOT auto-applied by ESP-IDF. To use it for local development:
-#   1. idf.py set-target esp32s3
-#   2. idf.py menuconfig  -> Xiaozhi Assistant -> Board -> "CUBE32 S3 (cube32esp)"
-#      (this will auto-select NimBLE + cube32 display/audio/PMU/BLE-OTA via
-#       the `select` rules in main/Kconfig.projbuild).
-#   3. Optionally merge the entries below into the generated `sdkconfig` for
-#      the optional features (camera DMA, BLE MTU tuning, LVGL fonts...).
+# Loaded by the project CMake logic when configuring with:
+#   idf.py -DBOARD=cube32-s3 set-target esp32s3
+# Select "CUBE32 S3 (cube32esp)" in menuconfig afterwards if required.
+# Selecting that board in menuconfig alone does not load this fragment.
 #
-# Release builds use the `sdkconfig_append` list in this directory's
-# config.json — those entries override anything here.
-#
-# Settings already provided by the project root sdkconfig.defaults / .esp32s3
-# are NOT repeated here — only deltas required for cube32-s3.
+# Release builds instead use this directory's config.json sdkconfig_append
+# entries, which must be kept synchronized with these defaults.
 
 # ---------------------------------------------------------------------------
 # Board selection (also auto-set by `idf.py menuconfig`).
@@ -21,30 +15,40 @@ CONFIG_BOARD_TYPE_CUBE32_S3=y
 CONFIG_IDF_TARGET="esp32s3"
 
 # ---------------------------------------------------------------------------
-# Partition table — use the xiaozhi project standard 16 MB layout.
-# (The root sdkconfig.defaults already sets partitions/v2/16m.csv; this
-#  entry keeps the 16 MB flash size without overriding the csv path.)
+# Partition table — CUBE32 BSP 0.0.17 layout (copy of the BSP's
+# partitions/cube32/16m.csv): 5 MB OTA slots, 64 KB coredump, assets at
+# 0xA20000. Names and subtypes match partitions/v2, so xiaozhi finds
+# "assets" by label. Keep this file identical to the BSP's.
+#
+# Moving an existing v2 device to this layout needs a USB flash of the
+# bootloader, partition table, otadata, app and assets; then erase the old
+# assets data:  idf.py -p <PORT> erase-region 0xA20000 0x5E0000
 # ---------------------------------------------------------------------------
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions/cube32/16m.csv"
+CONFIG_PARTITION_TABLE_OFFSET=0x8000
+
+# Core dump to flash: BSP safe mode reads the crash summary from the
+# coredump partition.
+CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
+CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
 
 # ---------------------------------------------------------------------------
-# CUBE32 BSP feature matrix (Phase 1)
+# CUBE32 BSP feature matrix
 # ---------------------------------------------------------------------------
 CONFIG_CUBE32_BOARD_S3_CORE=y
 
 CONFIG_CUBE32_DISPLAY_ENABLED=y
-# Pick ONE LCD physical panel. Default to 1.54" 240x240; switch to
-# CUBE32_DISPLAY_CUBE_TFT_TOUCH_200 for the 2.0" 240x320 module.
-CONFIG_CUBE32_DISPLAY_CUBE_TFT_TOUCH_154=y
-
 # LVGL is now owned by cube32 BSP (Mode B) — cube32 calls lv_init +
 # lvgl_port_init + lvgl_port_add_disp; xiaozhi attaches via
-# Cube32AttachedLcdDisplay.  Set Mode A by flipping this back to =n.
+# Cube32AttachedLcdDisplay.
 CONFIG_CUBE32_LVGL_ENABLED=y
-CONFIG_CUBE32_TOUCH_ENABLED=n
+CONFIG_CUBE32_TOUCH_ENABLED=y
 # Match Mode A task priority so audio task scheduling is unchanged.
 CONFIG_CUBE32_LVGL_TASK_PRIORITY=1
-CONFIG_CUBE32_LVGL_DOUBLE_BUFFER=y
+CONFIG_CUBE32_LVGL_BUFFER_LINES=20
+CONFIG_CUBE32_LVGL_DOUBLE_BUFFER=n
 # Draw buffers must be in internal DMA RAM — SPIRAM draw buffers require the
 # spi_master to allocate a priv TX bounce buffer from internal heap, which
 # fails when xiaozhi's audio pipelines have already consumed available
@@ -63,20 +67,20 @@ CONFIG_CUBE32_PMU_ENABLED=y
 CONFIG_CUBE32_RTC_ENABLED=y
 
 CONFIG_CUBE32_BLE_OTA_ENABLED=y
-CONFIG_CUBE32_BLE_OTA_DOUBLE_BOOT_ENABLE=y
 CONFIG_CUBE32_BLE_OTA_MTU_SIZE=512
 
-# Disabled subsystems
-# NOTE: to enable A7670 LTE modem, merge sdkconfig.defaults.cube32-s3.4g on
-# top of this file (sets CONFIG_CUBE32_MODEM_ENABLED=y and disables USB input).
-CONFIG_CUBE32_MODEM_ENABLED=n
+# A7670 modem connection is Runtime: both USB and UART drivers are built and the
+# type is chosen over BLE config (stored in NVS, applied after restart). Until one
+# is chosen it follows CUBE32_MODEM_RUNTIME_DEFAULT_CONN in the BSP (USB).
+CONFIG_CUBE32_MODEM_ENABLED=y
+CONFIG_CUBE32_MODEM_CONNECTION_RUNTIME=y
 CONFIG_CUBE32_ROBOT_HEAD_ENABLED=n
 # Face expression mode enabled; runtime default is chat UI.
 # Switch at runtime via MCP tool "self.cube32.set_display_mode".
 CONFIG_CUBE32_FACE_EXPRESSION_ENABLED=y
 CONFIG_CUBE32_SERVO_ENABLED=n
-CONFIG_CUBE32_IMU_ENABLED=n
-CONFIG_CUBE32_MAG_ENABLED=n
+CONFIG_CUBE32_IMU_ENABLED=y
+CONFIG_CUBE32_MAG_ENABLED=y
 CONFIG_CUBE32_USB_INPUT_ENABLED=n
 CONFIG_CUBE32_SDCARD_ENABLED=n
 
@@ -97,6 +101,28 @@ CONFIG_CAMERA_DMA_BUFFER_SIZE_MAX=8192
 # Audio codec I2C — cube32 uses the new (non-backward-compat) codec_dev API.
 # ---------------------------------------------------------------------------
 CONFIG_CODEC_I2C_BACKWARD_COMPATIBLE=n
+
+# ---------------------------------------------------------------------------
+# A7670 modem — UART and USB variants both require esp_modem and PPP.
+# ---------------------------------------------------------------------------
+CONFIG_ESP_MODEM_ADD_FLOW_CONTROL=y
+CONFIG_ESP_MODEM_CMUX_DEFRAGMENT_PAYLOAD=y
+CONFIG_ESP_MODEM_PPP_SERVER_SUPPORT=y
+CONFIG_PPP_SUPPORT=y
+CONFIG_PPP_PAP_SUPPORT=y
+CONFIG_PPP_CHAP_SUPPORT=y
+CONFIG_PPP_MSCHAP_SUPPORT=y
+CONFIG_PPP_MPPE_SUPPORT=y
+
+# ---------------------------------------------------------------------------
+# USB Host — required for the A7670 USB CDC-ACM interface (Runtime build
+# includes the USB driver). USB device mode (TinyUSB) must not be enabled, and
+# the BSP USB input is mutually exclusive with the USB modem
+# (CONFIG_CUBE32_USB_INPUT_ENABLED=n above).
+# ---------------------------------------------------------------------------
+CONFIG_USB_OTG_SUPPORTED=y
+CONFIG_USB_HOST_CONTROL_TRANSFER_MAX_SIZE=1024
+CONFIG_USB_HOST_HW_BUFFER_BIAS_BALANCED=y
 
 # ---------------------------------------------------------------------------
 # Bluetooth — NimBLE required by cube32 BLE OTA. xiaozhi BLUFI not used.

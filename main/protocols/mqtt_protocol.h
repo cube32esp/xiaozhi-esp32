@@ -33,8 +33,10 @@ public:
     bool OpenAudioChannel() override;
     void CloseAudioChannel(bool send_goodbye = true) override;
     bool IsAudioChannelOpened() const override;
+    bool IsServerLinkLost() const override { return link_lost_; }  // CUBE32
 
 private:
+    std::atomic<bool> link_lost_{false};  // CUBE32: MQTT broker link state for the status strip
     // Alive flag for safe scheduled callbacks - set to false in destructor
     std::shared_ptr<std::atomic<bool>> alive_ = std::make_shared<std::atomic<bool>>(true);
     

@@ -73,6 +73,8 @@ public:
     virtual void SendStopListening();
     virtual void SendAbortSpeaking(AbortReason reason);
     virtual void SendMcpMessage(const std::string& message);
+    // CUBE32: true when a persistent server link (MQTT) was established and is now lost.
+    virtual bool IsServerLinkLost() const { return false; }
 
 protected:
     std::function<void(const cJSON* root)> on_incoming_json_;

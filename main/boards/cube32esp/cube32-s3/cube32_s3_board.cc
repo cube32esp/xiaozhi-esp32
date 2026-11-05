@@ -28,15 +28,20 @@
 
 #include "mcp_server.h"
 #include <ssid_manager.h>
+#include <wifi_manager.h>
 #include <utils/config_manager.h>
 #ifdef CONFIG_CUBE32_MODEM_ENABLED
 #include "cube32_modem_network.h"
 #include <cJSON.h>
+#include <font_awesome.h>
 #endif
 
 #include <esp_log.h>
 #include <esp_lcd_panel_ops.h>
 #include <esp_lvgl_port.h>
+
+#include <utility>
+#include <algorithm>
 
 #define TAG "cube32-s3"
 
@@ -92,15 +97,49 @@ private:
     NetworkEventCallback network_callback_;
 #endif
 
-    void InitializeDisplay() {
-        auto& st = cube32::ST7789Display::instance();
-        if (!st.isInitialized()) {
-            ESP_LOGE(TAG, "ST7789 not initialised — cube32_init() failed earlier");
-            return;
+#ifdef CONFIG_CUBE32_LVGL_ENABLED
+    Cube32StripInfo GetStripInfo() {
+        Cube32StripInfo info;
+#ifdef CONFIG_CUBE32_MODEM_ENABLED
+        if (Cube32ModemNetwork::ShouldUseModem()) {
+            info.mode_text = Cube32ModemNetwork::GetModeText();
+            info.link_up = Cube32ModemNetwork::IsLinkUp();
+            return info;
         }
+#endif
+        info.mode_text = "WiFi";
+        info.link_up = WifiManager::GetInstance().IsConnected();
+        return info;
+    }
+#endif
 
-        const uint16_t w = st.getBaseWidth();
-        const uint16_t h = st.getBaseHeight();
+    void InitializeDisplay() {
+        // The BSP selects the controller from the detected touch/display
+        // model. GT911 320x320 panels initialize ST7796S; legacy panels use
+        // ST7789. Keep the panel handles separate from the singleton type so
+        // the rest of the adapter can serve either controller.
+        esp_lcd_panel_io_handle_t panel_io = nullptr;
+        esp_lcd_panel_handle_t panel = nullptr;
+        uint16_t w = 0;
+        uint16_t h = 0;
+
+        auto& st7796 = cube32::ST7796Display::instance();
+        if (st7796.isInitialized()) {
+            panel_io = st7796.getIOHandle();
+            panel = st7796.getPanelHandle();
+            w = st7796.getBaseWidth();
+            h = st7796.getBaseHeight();
+        } else {
+            auto& st7789 = cube32::ST7789Display::instance();
+            if (!st7789.isInitialized()) {
+                ESP_LOGE(TAG, "No CUBE32 display was initialised — cube32_init() failed earlier");
+                return;
+            }
+            panel_io = st7789.getIOHandle();
+            panel = st7789.getPanelHandle();
+            w = st7789.getBaseWidth();
+            h = st7789.getBaseHeight();
+        }
 
 #ifdef CONFIG_CUBE32_LVGL_ENABLED
         // ---- Mode B: cube32 BSP owns LVGL ------------------------------------
@@ -111,26 +150,25 @@ private:
 #if defined(CONFIG_CUBE32_FACE_EXPRESSION_ENABLED)
         if (Cube32FaceDisplay::IsFaceModeEnabled()) {
             ESP_LOGI(TAG, "Display: face expression mode");
-            display_ = new Cube32FaceDisplay(
-                st.getIOHandle(), st.getPanelHandle(), w, h);
+            display_ = new Cube32FaceDisplay(panel_io, panel, w, h);
         } else {
             ESP_LOGI(TAG, "Display: chat mode");
-            display_ = new Cube32AttachedLcdDisplay(
-                st.getIOHandle(), st.getPanelHandle(), w, h);
+            display_ = new Cube32AttachedLcdDisplay(panel_io, panel, w, h);
         }
 #else
-        display_ = new Cube32AttachedLcdDisplay(
-            st.getIOHandle(), st.getPanelHandle(), w, h);
+        display_ = new Cube32AttachedLcdDisplay(panel_io, panel, w, h);
 #endif
+        // Feed the second status row (mode text and link state).
+        static_cast<Cube32AttachedLcdDisplay*>(display_)->SetStripInfoProvider(
+            [this]() { return GetStripInfo(); });
 #else
         // ---- Mode A: xiaozhi's SpiLcdDisplay owns LVGL -----------------------
         // cube32 deliberately keeps the panel OFF until the first frame is
         // drawn; flip it on here so the panel is ready before LVGL flushes.
-        esp_lcd_panel_disp_on_off(st.getPanelHandle(), true);
+        esp_lcd_panel_disp_on_off(panel, true);
 
         // SpiLcdDisplay uses BASE dimensions; LVGL handles rotation.
-        display_ = new SpiLcdDisplay(st.getIOHandle(), st.getPanelHandle(),
-                                     w, h,
+        display_ = new SpiLcdDisplay(panel_io, panel, w, h,
                                      /*offset_x*/ 0, /*offset_y*/ 0,
                                      /*mirror_x*/ false,
                                      /*mirror_y*/ false,
@@ -158,7 +196,7 @@ private:
 #endif
             lvgl_port_lock(0);
             lv_display_set_rotation(lv_display_get_default(), kLvRot);
-            esp_lcd_panel_set_gap(st.getPanelHandle(), kXGap, kYGap);
+            esp_lcd_panel_set_gap(panel, kXGap, kYGap);
             lvgl_port_unlock();
         }
 #endif
@@ -336,27 +374,49 @@ public:
 #ifdef CONFIG_CUBE32_PMU_ENABLED
     bool GetBatteryLevel(int& level, bool& charging, bool& discharging) override {
         auto& pmu = cube32::PMU::instance();
-        if (!pmu.isInitialized()) {
+        if (!pmu.isInitialized() || !pmu.isBatteryPresent()) {
             return false;
         }
-        level       = pmu.getBatteryPercent();
+        const int percent = pmu.getBatteryPercent();
+        if (percent < 0) {
+            return false;
+        }
+        // Clamp: the shared status bar indexes its icon table with level / 20.
+        level       = std::min(percent, 100);
         charging    = pmu.isCharging();
-        discharging = !charging;
+        // Not simply !charging: a full battery on USB power is "standby", and must
+        // not trigger the shared low-battery popup logic.
+        discharging = pmu.isDischarging();
         return true;
     }
 #endif
 
-#ifdef CONFIG_CUBE32_MODEM_ENABLED
     void SetNetworkEventCallback(NetworkEventCallback callback) override {
+#ifdef CONFIG_CUBE32_MODEM_ENABLED
         if (Cube32ModemNetwork::ShouldUseModem()) {
             // Defer forwarding — the modem task will deliver events directly.
             network_callback_ = std::move(callback);
             return;
         }
+#endif
         // Modem built but not active/present: take the WiFi path.
-        WifiBoard::SetNetworkEventCallback(std::move(callback));
+        WifiBoard::SetNetworkEventCallback(
+            [this, callback = std::move(callback)](NetworkEvent event, const std::string& data) {
+                // The base Wi-Fi station starts in modem power-save mode. On
+                // this board, the first DNS lookup during activation can then
+                // time out despite DHCP having completed. Disable Wi-Fi power
+                // save before the application starts its activation task.
+                if (event == NetworkEvent::Connected) {
+                    ESP_LOGI(TAG, "WiFi connected; disabling modem power save for activation");
+                    WifiBoard::SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
+                }
+                if (callback) {
+                    callback(event, data);
+                }
+            });
     }
 
+#ifdef CONFIG_CUBE32_MODEM_ENABLED
     void StartNetwork() override {
         if (Cube32ModemNetwork::ShouldUseModem()) {
             if (auto* d = GetDisplay()) {
@@ -372,7 +432,7 @@ public:
         // directly to WifiBoard then — forwarding an empty network_callback_ here would
         // silently overwrite it and drop all WiFi events, hanging Application::Run().
         if (network_callback_) {
-            WifiBoard::SetNetworkEventCallback(std::move(network_callback_));
+            SetNetworkEventCallback(std::move(network_callback_));
         }
         SyncCube32WiFiCredentials_();
         WifiBoard::StartNetwork();
@@ -380,6 +440,10 @@ public:
 
     const char* GetNetworkStateIcon() override {
         if (modem_net_.is_active()) {
+            // The signal quality alone stays valid after the PPP link drops.
+            if (!Cube32ModemNetwork::IsLinkUp()) {
+                return FONT_AWESOME_SIGNAL_OFF;
+            }
             return Cube32ModemNetwork::GetSignalIcon();
         }
         return WifiBoard::GetNetworkStateIcon();

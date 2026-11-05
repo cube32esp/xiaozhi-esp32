@@ -34,7 +34,7 @@ public:
     // Extends the base SetupUI() by:
     //   1. Hiding emoji_box_, emoji_image_, emoji_label_, content_
     //   2. Starting cube32::FaceDisplay on the active LVGL screen
-    //   3. Bringing top_bar_, status_bar_, bottom_bar_ to foreground
+    //   3. Bringing top_bar_, info_strip_, status_bar_, bottom_bar_ to foreground
     void SetupUI() override;
 
     // --- NVS helpers (used by the "self.cube32.set_display_mode" MCP tool) --

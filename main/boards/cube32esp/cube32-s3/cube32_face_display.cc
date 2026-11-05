@@ -170,7 +170,7 @@ void Cube32FaceDisplay::SetupUI() {
         {
             DisplayLockGuard lock(this);
 
-            if (top_bar_    != nullptr) top_h    = (int16_t)lv_obj_get_height(top_bar_);
+            top_h = static_cast<int16_t>(GetTopInset());
             if (bottom_bar_ != nullptr) bottom_h = (int16_t)lv_obj_get_height(bottom_bar_);
 
             // Guard: if layout hasn't resolved yet (height==0), use a safe fallback
@@ -187,7 +187,7 @@ void Cube32FaceDisplay::SetupUI() {
             }
             cfg.face_h = static_cast<uint16_t>(mid_h);
 
-            ESP_LOGI(TAG, "Face area: y=%d h=%d (top_bar=%dpx bottom_bar=%dpx)",
+            ESP_LOGI(TAG, "Face area: y=%d h=%d (top inset=%dpx bottom_bar=%dpx)",
                      cfg.face_y, cfg.face_h, top_h, bottom_h);
 
             rc = face.begin(cfg, screen);
@@ -204,6 +204,7 @@ void Cube32FaceDisplay::SetupUI() {
     {
         DisplayLockGuard lock(this);
         if (top_bar_    != nullptr) lv_obj_move_foreground(top_bar_);
+        if (info_strip_ != nullptr) lv_obj_move_foreground(info_strip_);
         if (status_bar_ != nullptr) lv_obj_move_foreground(status_bar_);
         if (bottom_bar_ != nullptr) lv_obj_move_foreground(bottom_bar_);
     }

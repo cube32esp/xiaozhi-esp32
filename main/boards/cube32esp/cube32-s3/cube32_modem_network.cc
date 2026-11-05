@@ -125,6 +125,23 @@ const char* Cube32ModemNetwork::GetSignalIcon() {
     return                          FONT_AWESOME_SIGNAL_STRONG;
 }
 
+std::string Cube32ModemNetwork::GetModeText() {
+    auto& modem = cube32::A7670Modem::instance();
+    if (!modem.isInitialized()) {
+        return "4G";
+    }
+    std::string text = modem.getModelName();
+    if (modem.getModel() == cube32::ModemModel::UNKNOWN) {
+        text = "4G";
+    }
+    text += (modem.getConnectionType() == cube32::ModemConnectionType::UART) ? " UART" : " USB";
+    return text;
+}
+
+bool Cube32ModemNetwork::IsLinkUp() {
+    return cube32::A7670Modem::instance().isPPPConnected();
+}
+
 std::string Cube32ModemNetwork::GetNetworkJson() const {
     auto& modem = cube32::A7670Modem::instance();
     cube32::ModemInfo info = {};

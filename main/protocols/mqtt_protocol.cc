@@ -83,6 +83,7 @@ bool MqttProtocol::StartMqttClient(bool report_error) {
     mqtt_->SetKeepAlive(keepalive_interval);
 
     mqtt_->OnDisconnected([this]() {
+        link_lost_ = true;  // CUBE32
         if (on_disconnected_ != nullptr) {
             on_disconnected_();
         }
@@ -91,6 +92,7 @@ bool MqttProtocol::StartMqttClient(bool report_error) {
     });
 
     mqtt_->OnConnected([this]() {
+        link_lost_ = false;  // CUBE32
         if (on_connected_ != nullptr) {
             on_connected_();
         }
@@ -143,6 +145,7 @@ bool MqttProtocol::StartMqttClient(bool report_error) {
     }
     if (!mqtt_->Connect(broker_address, broker_port, client_id, username, password)) {
         ESP_LOGE(TAG, "Failed to connect to endpoint, code=%d", mqtt_->GetLastError());
+        link_lost_ = true;  // CUBE32
         SetError(Lang::Strings::SERVER_NOT_CONNECTED);
         return false;
     }

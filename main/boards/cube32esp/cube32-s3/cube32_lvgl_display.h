@@ -13,6 +13,18 @@
 
 #include "display/lcd_display.h"
 
+#include <functional>
+#include <string>
+
+// Link information shown on the second status row; supplied by the board.
+struct Cube32StripInfo {
+    std::string mode_text;   // e.g. "WiFi", "A7671G USB", "A7671G UART"
+    bool link_up = false;    // Wi-Fi associated / modem PPP up
+};
+
+// Status layout (width <= 240 uses a 16 px font, larger screens the 20 px font):
+//   row 1 (xiaozhi top bar): [signal]  status / clock  [mute][battery icon]
+//   row 2 (info strip):      mode text   link / MQTT state   battery %
 class Cube32AttachedLcdDisplay : public LcdDisplay {
 public:
     // panel_io and panel are passed straight to LcdDisplay for bookkeeping;
@@ -20,4 +32,33 @@ public:
     Cube32AttachedLcdDisplay(esp_lcd_panel_io_handle_t panel_io,
                              esp_lcd_panel_handle_t panel,
                              int width, int height);
+
+    using StripInfoProvider = std::function<Cube32StripInfo()>;
+    void SetStripInfoProvider(StripInfoProvider provider) { strip_info_provider_ = std::move(provider); }
+
+    void SetupUI() override;
+    void SetTheme(Theme* theme) override;
+    void UpdateStatusBar(bool update_all = false) override;
+
+protected:
+    lv_obj_t* info_strip_ = nullptr;
+
+    // Height occupied at the top by the status bar plus the info strip.
+    // The caller must hold the display lock.
+    int GetTopInset();
+
+private:
+    lv_obj_t* mode_label_ = nullptr;
+    lv_obj_t* link_label_ = nullptr;
+    lv_obj_t* battery_pct_label_ = nullptr;
+    StripInfoProvider strip_info_provider_;
+    std::string last_mode_text_;
+    std::string last_link_text_;
+    std::string last_pct_text_;
+    bool last_charging_ = false;
+    uint32_t last_link_color_ = 0;
+
+    void BuildInfoStrip();
+    void LayoutInfoStrip();
+    void UpdateInfoStrip();
 };

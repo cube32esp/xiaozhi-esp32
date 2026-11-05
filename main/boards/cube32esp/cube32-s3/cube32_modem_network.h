@@ -36,6 +36,13 @@ public:
     // Returns the "network" JSON object string for GetDeviceStatusJson().
     std::string GetNetworkJson() const;
 
+    // Short mode label for the status strip: "<model> USB" / "<model> UART"
+    // (just "4G" until the modem model has been detected).
+    static std::string GetModeText();
+
+    // True while the PPP data link is up (cleared by the BSP when the link drops).
+    static bool IsLinkUp();
+
     bool is_active() const { return m_active_; }
 
 private:
