@@ -22,9 +22,9 @@ struct Cube32StripInfo {
     bool link_up = false;    // Wi-Fi associated / modem PPP up
 };
 
-// Status layout (width <= 240 uses a 16 px font, larger screens the 20 px font):
-//   row 1 (xiaozhi top bar): [signal]  status / clock  [mute][battery icon]
-//   row 2 (info strip):      mode text   link / MQTT state   battery %
+// Status layout (width <= 240 uses a 16 px font for row 2, larger screens the 20 px font):
+//   row 1 (xiaozhi top bar): [signal][link icon]  status / clock  [mute][battery icon]
+//   row 2 (info strip):      mode text                                    battery %
 class Cube32AttachedLcdDisplay : public LcdDisplay {
 public:
     // panel_io and panel are passed straight to LcdDisplay for bookkeeping;
@@ -53,12 +53,11 @@ private:
     lv_obj_t* battery_pct_label_ = nullptr;
     StripInfoProvider strip_info_provider_;
     std::string last_mode_text_;
-    std::string last_link_text_;
+    const char* last_link_icon_ = nullptr;
     std::string last_pct_text_;
     bool last_charging_ = false;
     uint32_t last_link_color_ = 0;
 
     void BuildInfoStrip();
-    void LayoutInfoStrip();
     void UpdateInfoStrip();
 };

@@ -38,12 +38,17 @@ idf.py -p <PORT> erase-region 0xA20000 0x5E0000
 The panel is auto-detected by the BSP (240x240 ST7789, 240x320 ST7789, 320x320 ST7796S). Screens up to 240 px wide use the 16 px font for the second row, wider screens the 20 px font. Everything else is laid out from the runtime screen size.
 
 ```
-row 1 (xiaozhi top bar)  [signal]      status / clock       [mute][battery icon]
-row 2 (info strip)       A7671G USB      Online / MQTT lost      85%
+row 1 (xiaozhi top bar)  [signal][link]      status / clock       [mute][battery icon]
+row 2 (info strip)       A7671G USB                                     85%
 ```
 
-- **Mode text** (left): `WiFi`, or `<modem model> USB` / `<modem model> UART` (`4G` until the model is detected).
-- **Link state** (centre): `Online` (green), `MQTT lost` (red, MQTT broker link dropped or reconnect failed), `No link` (red, Wi-Fi not associated or modem PPP down), `Linking` (amber, during startup), `WiFi setup` (amber, Wi-Fi config mode).
+- **Mode text** (row 2, left): `WiFi`, or `<modem model> USB` / `<modem model> UART` (`4G` until the model is detected).
+- **Link icon** (row 1, right of the signal icon; a floating label so the existing top-bar items do not move). It reports whether the service is reachable, while the signal icon shows radio / Wi-Fi quality:
+  - cloud, green: online
+  - cloud with slash, red: MQTT broker link dropped or reconnect failed
+  - warning triangle, red: no link (Wi-Fi not associated or modem PPP down)
+  - spinner, amber: starting up
+  - gear, amber: Wi-Fi config mode
 - **Battery % and charging** (right): hidden when no battery is present. The % turns green while the PMU reports charging; the row-1 battery icon switches to the charging bolt as before. A full battery on USB power (PMU standby) is neither charging nor discharging.
 - The signal icon on row 1 shows "no signal" when the modem PPP link is down, not only when the signal quality is unknown.
 - Face mode: the eye area starts below the info strip (`Cube32AttachedLcdDisplay::GetTopInset()`).

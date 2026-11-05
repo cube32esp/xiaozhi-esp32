@@ -16,7 +16,7 @@
 #include "display/lvgl_display/lvgl_theme.h"
 
 #include <esp_log.h>
-#include <algorithm>
+#include <font_awesome.h>
 
 #define TAG "Cube32AttachedLcdDisplay"
 
@@ -89,33 +89,23 @@ void Cube32AttachedLcdDisplay::BuildInfoStrip() {
         lv_obj_set_style_text_color(label, theme->text_color(), 0);
     };
     make_label(mode_label_);
-    make_label(link_label_);
     make_label(battery_pct_label_);
-    LayoutInfoStrip();
-}
-
-// Mode text sits on the left, battery % on the right, and the link label is
-// centred on the screen, moved aside only as far as needed to avoid the others.
-void Cube32AttachedLcdDisplay::LayoutInfoStrip() {
-    constexpr int kGap = 4;
-    lv_obj_update_layout(info_strip_);
-    const int area_w = lv_obj_get_content_width(info_strip_);
-    const int left_w = lv_obj_get_width(mode_label_);
-    const int right_w = lv_obj_get_width(battery_pct_label_);
-    const int link_w = lv_obj_get_width(link_label_);
-
-    int x = (area_w - link_w) / 2;
-    const int min_x = left_w + kGap;
-    const int max_x = area_w - right_w - link_w - kGap;
-    if (min_x > max_x) {
-        x = (min_x + max_x) / 2;
-    } else {
-        x = std::clamp(x, min_x, max_x);
-    }
-
     lv_obj_align(mode_label_, LV_ALIGN_LEFT_MID, 0, 0);
     lv_obj_align(battery_pct_label_, LV_ALIGN_RIGHT_MID, 0, 0);
-    lv_obj_align(link_label_, LV_ALIGN_LEFT_MID, x, 0);
+
+    // Link-state icon on row 1, right of the signal icon. FLOATING keeps it out
+    // of the top bar's flex layout, so the existing items do not move.
+    // The offset is the signal glyph's advance (25 px at 20 px, wider than the
+    // font's line height) plus a gap, so even the 26 px wide "no signal" glyph
+    // does not touch it.
+    const lv_font_t* icon_font = theme->icon_font()->font();
+    const int signal_w = lv_font_get_glyph_width(icon_font, 0xF1EB, 0);  // FONT_AWESOME_WIFI
+    link_label_ = lv_label_create(top_bar_);
+    lv_label_set_text(link_label_, "");
+    lv_obj_add_flag(link_label_, LV_OBJ_FLAG_FLOATING);
+    lv_obj_set_style_text_font(link_label_, icon_font, 0);
+    lv_obj_set_style_text_color(link_label_, theme->text_color(), 0);
+    lv_obj_align(link_label_, LV_ALIGN_LEFT_MID, signal_w + theme->spacing(3), 0);
 }
 
 int Cube32AttachedLcdDisplay::GetTopInset() {
@@ -140,6 +130,7 @@ void Cube32AttachedLcdDisplay::SetTheme(Theme* theme) {
     auto* lvgl_theme = static_cast<LvglTheme*>(theme);
     lv_obj_set_style_bg_color(info_strip_, lvgl_theme->background_color(), 0);
     lv_obj_set_style_text_color(mode_label_, lvgl_theme->text_color(), 0);
+    lv_obj_set_style_text_font(link_label_, lvgl_theme->icon_font()->font(), 0);
     lv_obj_set_style_text_color(battery_pct_label_,
         last_charging_ ? lv_color_hex(kColorOk) : lvgl_theme->text_color(), 0);
 }
@@ -161,24 +152,26 @@ void Cube32AttachedLcdDisplay::UpdateInfoStrip() {
 
     auto& app = Application::GetInstance();
     const auto state = app.GetDeviceState();
-    const char* link_text;
+    // Symbols from the icon font; the signal icon next to it already shows
+    // radio/Wi-Fi quality, so this one reports whether the service is reachable.
+    const char* link_icon;
     uint32_t link_color;
     if (!info.link_up) {
         if (state == kDeviceStateWifiConfiguring) {
-            link_text = "WiFi setup";
+            link_icon = FONT_AWESOME_GEAR;
             link_color = kColorWarn;
         } else if (state == kDeviceStateStarting) {
-            link_text = "Linking";
+            link_icon = FONT_AWESOME_SPINNER;
             link_color = kColorWarn;
         } else {
-            link_text = "No link";
+            link_icon = FONT_AWESOME_TRIANGLE_EXCLAMATION;
             link_color = kColorError;
         }
     } else if (app.IsServerLinkLost()) {
-        link_text = "MQTT lost";
+        link_icon = FONT_AWESOME_CLOUD_SLASH;
         link_color = kColorError;
     } else {
-        link_text = "Online";
+        link_icon = FONT_AWESOME_CLOUD;
         link_color = kColorOk;
     }
 
@@ -190,7 +183,7 @@ void Cube32AttachedLcdDisplay::UpdateInfoStrip() {
         snprintf(pct, sizeof(pct), "%d%%", level);
     }
 
-    if (info.mode_text == last_mode_text_ && last_link_text_ == link_text &&
+    if (info.mode_text == last_mode_text_ && last_link_icon_ == link_icon &&
         last_link_color_ == link_color && last_pct_text_ == pct && last_charging_ == charging) {
         return;
     }
@@ -200,10 +193,10 @@ void Cube32AttachedLcdDisplay::UpdateInfoStrip() {
         last_mode_text_ = info.mode_text;
         lv_label_set_text(mode_label_, last_mode_text_.c_str());
     }
-    if (last_link_text_ != link_text || last_link_color_ != link_color) {
-        last_link_text_ = link_text;
+    if (last_link_icon_ != link_icon || last_link_color_ != link_color) {
+        last_link_icon_ = link_icon;
         last_link_color_ = link_color;
-        lv_label_set_text(link_label_, link_text);
+        lv_label_set_text(link_label_, link_icon);
         lv_obj_set_style_text_color(link_label_, lv_color_hex(link_color), 0);
     }
     if (last_pct_text_ != pct || last_charging_ != charging) {
@@ -215,7 +208,6 @@ void Cube32AttachedLcdDisplay::UpdateInfoStrip() {
             charging ? lv_color_hex(kColorOk)
                      : static_cast<LvglTheme*>(current_theme_)->text_color(), 0);
     }
-    LayoutInfoStrip();
 }
 
 #endif // CONFIG_CUBE32_LVGL_ENABLED
