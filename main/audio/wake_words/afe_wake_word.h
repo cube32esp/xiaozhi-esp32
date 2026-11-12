@@ -10,6 +10,7 @@
 #include <model_path.h>
 
 #include <deque>
+#include <atomic>
 #include <string>
 #include <vector>
 #include <functional>
@@ -41,6 +42,9 @@ private:
     char* wakenet_model_ = NULL;
     std::vector<std::string> wake_words_;
     EventGroupHandle_t event_group_;
+    // CUBE32: lets the destructor stop the detection task (the object is recreated around a data OTA)
+    std::atomic<bool> exit_requested_{false};
+    bool task_started_ = false;
     std::function<void(const std::string& wake_word)> wake_word_detected_callback_;
     AudioCodec* codec_ = nullptr;
     std::string last_detected_wake_word_;

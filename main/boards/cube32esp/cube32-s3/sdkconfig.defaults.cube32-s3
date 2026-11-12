@@ -47,7 +47,8 @@ CONFIG_CUBE32_LVGL_ENABLED=y
 CONFIG_CUBE32_TOUCH_ENABLED=y
 # Match Mode A task priority so audio task scheduling is unchanged.
 CONFIG_CUBE32_LVGL_TASK_PRIORITY=1
-CONFIG_CUBE32_LVGL_BUFFER_LINES=20
+# 10 lines (6.4 KB internal DMA RAM) leave room for the 8192 NimBLE stack; 20 lines starved the audio/UDP path.
+CONFIG_CUBE32_LVGL_BUFFER_LINES=10
 CONFIG_CUBE32_LVGL_DOUBLE_BUFFER=n
 # Draw buffers must be in internal DMA RAM — SPIRAM draw buffers require the
 # spi_master to allocate a priv TX bounce buffer from internal heap, which
@@ -58,8 +59,7 @@ CONFIG_CUBE32_LVGL_DOUBLE_BUFFER=n
 CONFIG_CUBE32_LVGL_USE_SPIRAM=n
 
 CONFIG_CUBE32_AUDIO_ENABLED=y
-# AEC handled by xiaozhi audio pipeline — cube32 codec runs without HW AEC.
-CONFIG_CUBE32_AUDIO_AEC_NONE=y
+# The BSP picks the AEC mode per audio module (AecMode::AUTO); xiaozhi does not use it.
 
 CONFIG_CUBE32_CAMERA_ENABLED=y
 CONFIG_CUBE32_ADC_BUTTON_ENABLED=y
@@ -85,7 +85,8 @@ CONFIG_CUBE32_USB_INPUT_ENABLED=n
 CONFIG_CUBE32_SDCARD_ENABLED=n
 
 # Adjust Default Settings
-CONFIG_CUBE32_AUDIO_INPUT_SAMPLE_RATE=24000
+CONFIG_CUBE32_AUDIO_INPUT_SAMPLE_RATE=16000
+CONFIG_CUBE32_AUDIO_OUTPUT_SAMPLE_RATE=16000
 CONFIG_CUBE32_BLE_OTA_DOUBLE_BOOT_ENABLE=n
 
 # ---------------------------------------------------------------------------
@@ -135,6 +136,8 @@ CONFIG_BT_NIMBLE_ROLE_BROADCASTER=y
 CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
 CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL=y
 CONFIG_BT_NIMBLE_PINNED_TO_CORE_1=y
+# BLE OTA commands (GET_CONFIG, partitions) run on the NimBLE host task; 4096 overflows (BSP-01).
+CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE=8192
 
 # BLE OTA speed optimisation
 CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=512
@@ -152,3 +155,9 @@ CONFIG_USE_ESP_BLUFI_WIFI_PROVISIONING=n
 CONFIG_LV_FONT_MONTSERRAT_10=y
 CONFIG_LV_FONT_MONTSERRAT_20=y
 CONFIG_LV_FONT_MONTSERRAT_24=y
+
+# ---------------------------------------------------------------------------
+# Internal RAM headroom: allocations above 512 bytes go to PSRAM (the S3 default is 2048). Less
+# fragmentation leaves an 8 KB block for the BLE data-OTA worker and room for the audio path.
+# ---------------------------------------------------------------------------
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=512

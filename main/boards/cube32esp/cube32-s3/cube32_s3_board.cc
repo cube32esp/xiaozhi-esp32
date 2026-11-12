@@ -13,6 +13,7 @@
 #include "config.h"
 #include "display/lcd_display.h"
 #include "assets/lang_config.h"
+#include "assets.h"
 
 #include "cube32.h"
 #include "cube32_audio_codec.h"
@@ -37,9 +38,17 @@
 #endif
 
 #include <esp_log.h>
+#include <esp_heap_caps.h>
+#include <esp_timer.h>
 #include <esp_lcd_panel_ops.h>
 #include <esp_lvgl_port.h>
 
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+
+#include <atomic>
+#include <cstring>
+#include <memory>
 #include <utility>
 #include <algorithm>
 
@@ -56,6 +65,220 @@
 //         Cube32AttachedLcdDisplay attaches to the existing lv_display_t.
 
 namespace {
+
+#ifdef CONFIG_CUBE32_BLE_OTA_ENABLED
+// BLE OTA and xiaozhi share the internal RAM, so while a BLE OTA transfer runs (data OTA of the
+// memory-mapped "assets" partition, or an app OTA that ends with a restart) the wake word, the audio
+// processor and the assets are released. They come back when the update has finished or failed and
+// no restart follows. Outside an OTA the services are untouched, also while a BLE client is connected.
+//
+// Data OTA: BleOta::setDataOtaHandler (BEGIN on the NimBLE host task, END on the BSP worker task).
+// App OTA: BSP command callback (START_OTA / OTA_END / OTA_ABORT) and connection callback.
+constexpr int kResumeAfterFollowUpMs = 3000;   // Studio's partitions / hash commands follow a data OTA
+constexpr int kResumeWaitForRestartMs = 60000;
+
+struct DataOtaBeginState {
+    enum : int { kPending, kRunning, kCancelled };
+    std::atomic<int> phase{kPending};
+    SemaphoreHandle_t done = xSemaphoreCreateBinary();
+    bool accepted = false;
+    ~DataOtaBeginState() { vSemaphoreDelete(done); }
+};
+
+// Written on the main task only (g_suspended also read by the data OTA worker)
+std::atomic<bool> g_suspended{false};   // assets and models released (data OTA)
+std::atomic<bool> g_app_ota_active{false};
+bool g_audio_stopped = false;           // conversation ended and wake word stopped (app OTA)
+int g_suspend_tries = 0;
+esp_timer_handle_t g_suspend_timer = nullptr;
+esp_timer_handle_t g_resume_timer = nullptr;
+
+void ArmTimer(esp_timer_handle_t& handle, const char* name, esp_timer_cb_t cb, int ms) {
+    if (handle == nullptr) {
+        esp_timer_create_args_t args = {};
+        args.callback = cb;
+        args.name = name;
+        if (esp_timer_create(&args, &handle) != ESP_OK) {
+            return;
+        }
+    }
+    esp_timer_stop(handle);
+    esp_timer_start_once(handle, (uint64_t)ms * 1000);
+}
+
+void LogRam(const char* what) {
+    ESP_LOGI(TAG, "%s: internal RAM free %u, largest block %u", what,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+}
+
+// Main task. Returns true when the services are released.
+bool ReleaseServices() {
+    if (g_suspended) {
+        return true;
+    }
+    auto& app = Application::GetInstance();
+    DeviceState state = app.GetDeviceState();
+    if (state != kDeviceStateIdle && state != kDeviceStateWifiConfiguring) {
+        return false;
+    }
+    Assets::GetInstance().Release();
+    g_suspended = true;
+    // The BSP worker tasks need a free internal block; let the idle task free deleted tasks
+    vTaskDelay(pdMS_TO_TICKS(300));
+    LogRam("BLE OTA: services released");
+    return true;
+}
+
+void ResumeTick(void*) {
+    Application::GetInstance().Schedule([]() {
+        if (!g_suspended && !g_audio_stopped) {
+            return;
+        }
+        // A new transfer, or a worker for a follow-up command, is still running
+        if (cube32::BleOta::isDataOtaActive() ||
+            (g_app_ota_active &&
+             cube32::BleOta::instance().getStatus().state == cube32::BleOtaState::OTA_IN_PROGRESS)) {
+            ArmTimer(g_resume_timer, "ota_resume", ResumeTick, 1000);
+            return;
+        }
+        auto& app = Application::GetInstance();
+        // Maps and applies the assets again, also after a failed transfer, so the device keeps working
+        bool reloaded = !g_suspended || Assets::GetInstance().Reload();
+        g_suspended = false;
+        g_audio_stopped = false;
+        g_app_ota_active = false;
+        if (app.GetDeviceState() == kDeviceStateIdle) {
+            app.GetAudioService().EnableWakeWordDetection(true);
+        }
+        ESP_LOGI(TAG, "BLE OTA: services resumed, assets %s", reloaded ? "applied" : "not valid");
+    });
+}
+
+void ScheduleResume(int ms) {
+    ArmTimer(g_resume_timer, "ota_resume", ResumeTick, ms);
+}
+
+// App OTA: the transfer needs no extra RAM, but the AFE tasks (core 1, higher priority than the NimBLE
+// host) can starve the BLE host and lose chunks. End the conversation and stop the wake word without
+// blocking the NimBLE host task. Nothing heavy runs here: the chunks start right after the START_OTA reply.
+void SuspendTick(void*) {
+    Application::GetInstance().Schedule([]() {
+        if (g_audio_stopped || !g_app_ota_active) {
+            return;
+        }
+        auto& app = Application::GetInstance();
+        DeviceState state = app.GetDeviceState();
+        if (state == kDeviceStateConnecting || state == kDeviceStateListening ||
+            state == kDeviceStateSpeaking) {
+            app.CloseAudioChannel();
+            if (++g_suspend_tries < 30) {
+                ArmTimer(g_suspend_timer, "ota_suspend", SuspendTick, 500);
+                return;
+            }
+        }
+        app.GetAudioService().EnableWakeWordDetection(false);
+        app.GetAudioService().EnableVoiceProcessing(false);
+        g_audio_stopped = true;
+        ESP_LOGI(TAG, "BLE OTA: wake word stopped for the app update");
+    });
+}
+
+bool OnDataOta(cube32::DataOtaEvent event, const char* label, bool ok) {
+    if (strcmp(label, "assets") != 0) {
+        return true;
+    }
+    auto& app = Application::GetInstance();
+
+    if (event == cube32::DataOtaEvent::BEGIN) {
+        if (g_resume_timer != nullptr) {
+            esp_timer_stop(g_resume_timer);
+        }
+        // A conversation holds the audio models and the server link: end it. Startup and activation
+        // finish on their own. Wait for Idle in both cases.
+        DeviceState current = app.GetDeviceState();
+        if (current == kDeviceStateConnecting || current == kDeviceStateListening ||
+            current == kDeviceStateSpeaking) {
+            app.Schedule([]() { Application::GetInstance().CloseAudioChannel(); });
+        }
+        if (current == kDeviceStateStarting || current == kDeviceStateActivating ||
+            current == kDeviceStateConnecting || current == kDeviceStateListening ||
+            current == kDeviceStateSpeaking) {
+            for (int i = 0; i < 200 && app.GetDeviceState() != kDeviceStateIdle; i++) {
+                vTaskDelay(pdMS_TO_TICKS(50));
+            }
+        }
+
+        auto state = std::make_shared<DataOtaBeginState>();
+        // The audio service and the display are owned by the main task
+        app.Schedule([state]() {
+            int expected = DataOtaBeginState::kPending;
+            if (!state->phase.compare_exchange_strong(expected, DataOtaBeginState::kRunning)) {
+                return;
+            }
+            state->accepted = ReleaseServices();
+            if (!state->accepted) {
+                ESP_LOGW(TAG, "Assets data OTA refused: device is busy (state %d)",
+                         (int)Application::GetInstance().GetDeviceState());
+            }
+            xSemaphoreGive(state->done);
+        });
+
+        if (xSemaphoreTake(state->done, pdMS_TO_TICKS(5000)) != pdTRUE) {
+            int expected = DataOtaBeginState::kPending;
+            if (state->phase.compare_exchange_strong(expected, DataOtaBeginState::kCancelled)) {
+                ESP_LOGW(TAG, "Assets data OTA refused: main task did not respond");
+                return false;
+            }
+            xSemaphoreTake(state->done, portMAX_DELAY);
+        }
+        return state->accepted;
+    }
+
+    if (g_suspended) {
+        ESP_LOGI(TAG, "Assets data OTA finished: transfer %s", ok ? "verified" : "failed");
+        ScheduleResume(kResumeAfterFollowUpMs);
+    }
+    return true;
+}
+
+void OnBleCommand(uint8_t cmd_id, const uint8_t*, size_t) {
+    auto state = cube32::BleOta::instance().getStatus().state;
+    switch (cmd_id) {
+    case CUBE32_BLE_CMD_START_OTA:
+        if (state == cube32::BleOtaState::OTA_IN_PROGRESS && !g_app_ota_active) {
+            g_app_ota_active = true;
+            g_suspend_tries = 0;
+            if (g_resume_timer != nullptr) {
+                esp_timer_stop(g_resume_timer);
+            }
+            ArmTimer(g_suspend_timer, "ota_suspend", SuspendTick, 100);
+        }
+        break;
+    case CUBE32_BLE_CMD_OTA_END:
+        if (g_app_ota_active) {
+            // A completed app OTA is followed by a restart; resume only if it does not come
+            ScheduleResume(state == cube32::BleOtaState::OTA_COMPLETE ? kResumeWaitForRestartMs
+                                                                      : kResumeAfterFollowUpMs);
+        }
+        break;
+    case CUBE32_BLE_CMD_OTA_ABORT:
+        if (g_app_ota_active) {
+            ScheduleResume(kResumeAfterFollowUpMs);
+        }
+        break;
+    default:
+        break;
+    }
+}
+
+void OnBleConnection(cube32::BleConnectionState state) {
+    if (state == cube32::BleConnectionState::DISCONNECTED && g_app_ota_active &&
+        cube32::BleOta::instance().getStatus().state != cube32::BleOtaState::OTA_COMPLETE) {
+        ScheduleResume(kResumeAfterFollowUpMs);   // the transfer was cut; no restart will follow
+    }
+}
+#endif  // CONFIG_CUBE32_BLE_OTA_ENABLED
 
 // PMU-controlled on/off backlight (cube32 routes the LCD backlight through
 // AXP2101 ALDO3 — there is no PWM pin available).
@@ -347,6 +570,11 @@ public:
         // One-shot BSP initialisation. Every subsystem comes up here according
         // to the cube32 Kconfig matrix.
         ESP_ERROR_CHECK(cube32_init());
+#ifdef CONFIG_CUBE32_BLE_OTA_ENABLED
+        cube32::BleOta::instance().setDataOtaHandler(OnDataOta);
+        cube32::BleOta::instance().setCommandCallback(OnBleCommand);
+        cube32::BleOta::instance().setConnectionCallback(OnBleConnection);
+#endif
 
         InitializeDisplay();
 #ifdef CONFIG_CUBE32_CAMERA_ENABLED

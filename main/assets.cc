@@ -68,6 +68,52 @@ bool Assets::GetAssetData(const std::string& name, void*& ptr, size_t& size) {
     return strategy_ ? strategy_->GetAssetData(this, name, ptr, size) : false;
 }
 
+#if HAVE_LVGL
+LV_FONT_DECLARE(BUILTIN_TEXT_FONT);
+
+// Fonts, emoji and background images of the themes point into the mapped partition
+static void ResetThemesToBuiltin() {
+    auto& theme_manager = LvglThemeManager::GetInstance();
+    auto text_font = std::make_shared<LvglBuiltInFont>(&BUILTIN_TEXT_FONT);
+    for (const char* name : {"light", "dark"}) {
+        auto theme = theme_manager.GetTheme(name);
+        if (theme != nullptr) {
+            theme->set_text_font(text_font);
+            theme->set_emoji_collection(nullptr);
+            theme->set_background_image(nullptr);
+        }
+    }
+
+    auto display = Board::GetInstance().GetDisplay();
+    if (display != nullptr) {
+        auto current_theme = display->GetTheme();
+        if (current_theme != nullptr) {
+            display->SetTheme(current_theme);
+        }
+        display->SetEmotion("neutral");
+    }
+}
+#endif
+
+void Assets::Release() {
+    // The wake word frees the model list it was given; do not free it again in Reload()
+    Application::GetInstance().GetAudioService().ReleaseModels();
+    models_list_ = nullptr;
+#if HAVE_LVGL
+    ResetThemesToBuiltin();
+#endif
+    UnApplyPartition();
+    partition_valid_ = false;
+}
+
+bool Assets::Reload() {
+    if (!InitializePartition()) {
+        ESP_LOGW(TAG, "Assets partition is not valid after the update");
+        return false;
+    }
+    return Apply();
+}
+
 bool Assets::LoadSrmodelsFromIndex(Assets* assets, cJSON* root) {
     void* ptr = nullptr;
     size_t size = 0;

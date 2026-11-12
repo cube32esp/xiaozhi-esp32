@@ -1,5 +1,7 @@
 # CUBE32-S3 Build Guide
 
+This board uses the CUBE32 board support package (BSP), the ESP-IDF component `cube32esp/cube32_bsp` ([GitHub](https://github.com/cube32esp/cube32_bsp), [Espressif Component Registry](https://components.espressif.com/components/cube32esp/cube32_bsp)). Its README describes the CUBE32 hardware, drivers, Kconfig options and examples.
+
 Run all commands from the project root (`xiaozhi-esp32`).
 
 ## CUBE32-S3 build (A7670 modem: USB or UART selected at runtime)
@@ -32,6 +34,9 @@ idf.py -p <PORT> erase-region 0xA20000 0x5E0000
 - In `menuconfig`, select **Xiaozhi Assistant → Board → CUBE32 S3 (cube32esp)** if it is not already selected.
 - Do not use only `idf.py set-target esp32s3`: without `-DBOARD`, the CUBE32 board defaults are not loaded.
 - Release builds use [config.json](config.json) (`sdkconfig_append`), not `sdkconfig.defaults.cube32-s3`. Keep the two in sync (the only intentional differences are `CONFIG_IDF_TARGET` and `CONFIG_PARTITION_TABLE_OFFSET`, which `config.json` gets from `"target"` and the default).
+- Audio runs at 16 kHz in and out (`CONFIG_CUBE32_AUDIO_INPUT_SAMPLE_RATE` and `CONFIG_CUBE32_AUDIO_OUTPUT_SAMPLE_RATE`): both modules share one I2S clock, so keep the two equal. 24 kHz works, but on Wi-Fi it costs about 2 KB of internal RAM; the lowest free RAM dropped to 0.5 KB with UDP send failures and audio dropouts (16 kHz: 2.7 KB, no dropouts). The server sends 24 kHz audio, which the device resamples. The BSP chooses the AEC mode per audio module; xiaozhi does not use it. Modem dropouts are network jitter and do not depend on the rate.
+- Internal RAM is the limit on this board (the audio/UDP path fails with `errno=12` and `esp-aes: Failed to allocate memory` when it runs out). To make room for `CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE=8192` (BLE OTA commands such as `partitions` overflow 4096) the build uses `CONFIG_CUBE32_LVGL_BUFFER_LINES=10` (was 20) and `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=512` (S3 default 2048). If you raise any of these, check the `SystemInfo: free sram` lines during a conversation (keep the minimum above about 4 KB).
+- BLE OTA and xiaozhi share the internal RAM. While a BLE data OTA of the assets runs, the board releases the wake word, the audio processor and the assets, and ends a running conversation; during an app OTA it ends the conversation and stops the wake word (the AFE tasks can starve the NimBLE host and cost chunks); it registers `BleOta::setDataOtaHandler()`, the BSP command callback (START_OTA / OTA_END / OTA_ABORT) and the connection callback in [cube32_s3_board.cc](cube32_s3_board.cc). Nothing is released outside an OTA, also while a BLE client is connected. Services come back 3 s after a data OTA ends or fails (time for Studio's partitions / hash commands), 3 s after an aborted or cut app OTA, or 60 s after a completed app OTA if no restart follows. A data OTA is refused unless the device is Idle or in Wi-Fi configuration after a conversation was ended and start-up waited for (up to 10 s; the modem needs about 20 s to start). In modem mode there is about 5 KB less internal RAM than on Wi-Fi.
 
 ## Status display (240x240 and 320x320)
 
@@ -66,6 +71,10 @@ Keep these when upgrading xiaozhi from its original source (search for `CUBE32` 
 | [main/protocols/mqtt_protocol.h](../../../protocols/mqtt_protocol.h) | Added `std::atomic<bool> link_lost_` and the `IsServerLinkLost()` override | MQTT link state for the strip |
 | [main/protocols/mqtt_protocol.cc](../../../protocols/mqtt_protocol.cc) | `link_lost_ = true` in the MQTT `OnDisconnected` callback and when `mqtt_->Connect()` fails in `StartMqttClient()`; `link_lost_ = false` in `OnConnected` | Upstream only logs an MQTT disconnect; nothing else reports it |
 | [main/application.h](../../../application.h) | Added `Application::IsServerLinkLost()` (forwards to `protocol_`) | Public accessor used by the strip |
+| [main/application.h](../../../application.h) | Added `Application::CloseAudioChannel()` (forwards to `protocol_`) | The BLE data OTA handler ends a running conversation first |
+| [main/assets.h](../../../assets.h), [main/assets.cc](../../../assets.cc) | Added `Assets::Release()` (stops the wake word and audio processor, resets the themes to built-in fonts, unmaps the partition) and `Assets::Reload()` (maps and applies it again) | BLE data OTA overwrites the memory-mapped `assets` partition |
+| [main/audio/audio_service.h](../../../audio/audio_service.h), [main/audio/audio_service.cc](../../../audio/audio_service.cc) | Added `AudioService::ReleaseModels()`, `CreateAudioProcessor()` and `models_mutex_` (taken in the input task and in `SetModelsList()`) | The wake word and audio processor hold pointers into the mapped assets, so they are recreated around a data OTA |
+| [main/audio/wake_words/afe_wake_word.h](../../../audio/wake_words/afe_wake_word.h), [.cc](../../../audio/wake_words/afe_wake_word.cc), [main/audio/processors/afe_audio_processor.h](../../../audio/processors/afe_audio_processor.h), [.cc](../../../audio/processors/afe_audio_processor.cc) | Destructors stop the detection / audio_comm task first (`exit_requested_`, exit and exited event bits) | Upstream never destroys these objects; destroying them while the task runs crashes (event group used after delete) |
 
 Upstream behaviour that is left as is: after an MQTT drop the 60 s reconnect timer only runs while Idle, and a failed reconnect raises the usual "Error" alert with sound (`SetError(SERVER_NOT_CONNECTED)` is not guarded by `report_error`).
 

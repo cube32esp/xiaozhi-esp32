@@ -3,6 +3,8 @@
 #include <freertos/idf_additions.h>
 
 #define PROCESSOR_RUNNING 0x01
+#define PROCESSOR_EXIT 0x02
+#define PROCESSOR_EXITED 0x04
 
 #define TAG "AfeAudioProcessor"
 
@@ -87,6 +89,8 @@ void AfeAudioProcessor::Initialize(AudioCodec* codec, int frame_duration_ms, srm
         vTaskDelete(NULL);  // idle task handles PSRAM stack cleanup safely
     }, "audio_comm", 4096, this, 23, NULL, 1, MALLOC_CAP_SPIRAM) != pdPASS) {
         ESP_LOGE(TAG, "Failed to create audio_comm task");
+    } else {
+        task_started_ = true;
     }
 
     afe_iface_ = esp_afe_handle_from_config(afe_config);
@@ -94,10 +98,26 @@ void AfeAudioProcessor::Initialize(AudioCodec* codec, int frame_duration_ms, srm
 }
 
 AfeAudioProcessor::~AfeAudioProcessor() {
+    bool task_gone = true;
+    if (task_started_) {
+        exit_requested_ = true;
+        xEventGroupSetBits(event_group_, PROCESSOR_EXIT);
+        // An idle task exits at once; one blocked in fetch is released by destroying the AFE below
+        task_gone = xEventGroupWaitBits(event_group_, PROCESSOR_EXITED, pdFALSE, pdTRUE,
+                                        pdMS_TO_TICKS(200)) & PROCESSOR_EXITED;
+    }
     if (afe_data_ != nullptr) {
         afe_iface_->destroy(afe_data_);
     }
-    vEventGroupDelete(event_group_);
+    if (!task_gone) {
+        task_gone = xEventGroupWaitBits(event_group_, PROCESSOR_EXITED, pdFALSE, pdTRUE,
+                                        pdMS_TO_TICKS(1000)) & PROCESSOR_EXITED;
+    }
+    if (task_gone) {
+        vEventGroupDelete(event_group_);
+    } else {
+        ESP_LOGE(TAG, "Audio communication task did not exit, leaking the event group");
+    }
 }
 
 size_t AfeAudioProcessor::GetFeedSize() {
@@ -153,16 +173,26 @@ void AfeAudioProcessor::OnVadStateChange(std::function<void(bool speaking)> call
 
 void AfeAudioProcessor::AudioProcessorTask() {
     // Wait for first Start() so afe_data_ is guaranteed initialised.
-    xEventGroupWaitBits(event_group_, PROCESSOR_RUNNING, pdFALSE, pdTRUE, portMAX_DELAY);
+    xEventGroupWaitBits(event_group_, PROCESSOR_RUNNING | PROCESSOR_EXIT, pdFALSE, pdFALSE, portMAX_DELAY);
+    if (exit_requested_) {
+        xEventGroupSetBits(event_group_, PROCESSOR_EXITED);
+        return;
+    }
     auto fetch_size = afe_iface_->get_fetch_chunksize(afe_data_);
     auto feed_size = afe_iface_->get_feed_chunksize(afe_data_);
     ESP_LOGI(TAG, "Audio communication task started, feed size: %d fetch size: %d",
         feed_size, fetch_size);
 
-    while (true) {
-        xEventGroupWaitBits(event_group_, PROCESSOR_RUNNING, pdFALSE, pdTRUE, portMAX_DELAY);
+    while (!exit_requested_) {
+        xEventGroupWaitBits(event_group_, PROCESSOR_RUNNING | PROCESSOR_EXIT, pdFALSE, pdFALSE, portMAX_DELAY);
+        if (exit_requested_) {
+            break;
+        }
 
         auto res = afe_iface_->fetch_with_delay(afe_data_, portMAX_DELAY);
+        if (exit_requested_) {
+            break;
+        }
         if ((xEventGroupGetBits(event_group_) & PROCESSOR_RUNNING) == 0) {
             continue;
         }
@@ -205,6 +235,7 @@ void AfeAudioProcessor::AudioProcessorTask() {
             }
         }
     }
+    xEventGroupSetBits(event_group_, PROCESSOR_EXITED);
 }
 
 void AfeAudioProcessor::EnableDeviceAec(bool enable) {

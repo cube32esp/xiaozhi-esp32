@@ -31,6 +31,9 @@ public:
     bool Download(std::string url, std::function<void(int progress, size_t speed)> progress_callback);
     bool Apply(bool refresh_display_theme = true);
     bool GetAssetData(const std::string& name, void*& ptr, size_t& size);
+    // CUBE32: unmap the partition before a BLE data OTA overwrites it, and map and apply it again afterwards
+    void Release();
+    bool Reload();
 
     inline bool partition_valid() const { return partition_valid_; }
     inline std::string default_assets_url() const { return default_assets_url_; }

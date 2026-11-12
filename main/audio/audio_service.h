@@ -133,6 +133,8 @@ public:
     bool ReadAudioData(std::vector<int16_t>& data, int sample_rate, int samples);
     void ResetDecoder();
     void SetModelsList(srmodel_list_t* models_list);
+    // CUBE32: drops the wake word and audio processor that use the model list (data OTA of assets)
+    void ReleaseModels();
 
 private:
     AudioCodec* codec_ = nullptr;
@@ -156,7 +158,9 @@ private:
     int decoder_duration_ms_ = OPUS_FRAME_DURATION_MS;
     int decoder_frame_size_ = 0;
     DebugStatistics debug_statistics_;
+    void CreateAudioProcessor();
     srmodel_list_t* models_list_ = nullptr;
+    std::mutex models_mutex_;  // CUBE32: guards wake_word_/audio_processor_ replacement against the input task
 
     EventGroupHandle_t event_group_;
 

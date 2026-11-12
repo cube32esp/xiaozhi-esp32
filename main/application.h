@@ -67,6 +67,8 @@ public:
     bool IsVoiceDetected() const { return audio_service_.IsVoiceDetected(); }
     // CUBE32: MQTT server link lost (used by the CUBE32 status strip)
     bool IsServerLinkLost() const { return protocol_ && protocol_->IsServerLinkLost(); }
+    // CUBE32: end the running conversation (used before a BLE data OTA of the assets); call from the main task
+    void CloseAudioChannel() { if (protocol_) protocol_->CloseAudioChannel(); }
     
     /**
      * Request state transition

@@ -4,6 +4,8 @@
 #include <sstream>
 
 #define DETECTION_RUNNING_EVENT 1
+#define DETECTION_EXIT_EVENT 2
+#define DETECTION_EXITED_EVENT 4
 
 #define TAG "AfeWakeWord"
 
@@ -16,8 +18,20 @@ AfeWakeWord::AfeWakeWord()
 }
 
 AfeWakeWord::~AfeWakeWord() {
+    bool task_gone = true;
+    if (task_started_) {
+        exit_requested_ = true;
+        xEventGroupSetBits(event_group_, DETECTION_EXIT_EVENT);
+        // An idle task exits at once; one blocked in fetch is released by destroying the AFE below
+        task_gone = xEventGroupWaitBits(event_group_, DETECTION_EXITED_EVENT, pdFALSE, pdTRUE,
+                                        pdMS_TO_TICKS(200)) & DETECTION_EXITED_EVENT;
+    }
     if (afe_data_ != nullptr) {
         afe_iface_->destroy(afe_data_);
+    }
+    if (!task_gone) {
+        task_gone = xEventGroupWaitBits(event_group_, DETECTION_EXITED_EVENT, pdFALSE, pdTRUE,
+                                        pdMS_TO_TICKS(1000)) & DETECTION_EXITED_EVENT;
     }
 
     if (wake_word_encode_task_stack_ != nullptr) {
@@ -32,7 +46,11 @@ AfeWakeWord::~AfeWakeWord() {
         esp_srmodel_deinit(models_);
     }
 
-    vEventGroupDelete(event_group_);
+    if (task_gone) {
+        vEventGroupDelete(event_group_);
+    } else {
+        ESP_LOGE(TAG, "Detection task did not exit, leaking the event group");
+    }
 }
 
 bool AfeWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) {
@@ -108,6 +126,8 @@ bool AfeWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) {
     }, "audio_detection", 4096, this, 23, nullptr, 1, MALLOC_CAP_SPIRAM);
     if (rc != pdPASS) {
         ESP_LOGE(TAG, "Failed to create audio_detection task (err=%d) — AFE FEED will overflow", rc);
+    } else {
+        task_started_ = true;
     }
 
     return true;
@@ -162,10 +182,16 @@ void AfeWakeWord::AudioDetectionTask() {
     ESP_LOGI(TAG, "Audio detection task started, feed size: %d fetch size: %d",
         feed_size, fetch_size);
 
-    while (true) {
-        xEventGroupWaitBits(event_group_, DETECTION_RUNNING_EVENT, pdFALSE, pdTRUE, portMAX_DELAY);
+    while (!exit_requested_) {
+        xEventGroupWaitBits(event_group_, DETECTION_RUNNING_EVENT | DETECTION_EXIT_EVENT, pdFALSE, pdFALSE, portMAX_DELAY);
+        if (exit_requested_) {
+            break;
+        }
 
         auto res = afe_iface_->fetch_with_delay(afe_data_, portMAX_DELAY);
+        if (exit_requested_) {
+            break;
+        }
         if (res == nullptr || res->ret_value == ESP_FAIL) {
             continue;;
         }
@@ -182,6 +208,7 @@ void AfeWakeWord::AudioDetectionTask() {
             }
         }
     }
+    xEventGroupSetBits(event_group_, DETECTION_EXITED_EVENT);
 }
 
 void AfeWakeWord::StoreWakeWordData(const int16_t* data, size_t samples) {

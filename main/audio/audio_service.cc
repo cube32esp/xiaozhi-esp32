@@ -92,22 +92,7 @@ void AudioService::Initialize(AudioCodec* codec) {
         }
     }
 
-#if CONFIG_USE_AUDIO_PROCESSOR
-    audio_processor_ = std::make_unique<AfeAudioProcessor>();
-#else
-    audio_processor_ = std::make_unique<NoAudioProcessor>();
-#endif
-
-    audio_processor_->OnOutput([this](std::vector<int16_t>&& data) {
-        PushTaskToEncodeQueue(kAudioTaskTypeEncodeToSendQueue, std::move(data));
-    });
-
-    audio_processor_->OnVadStateChange([this](bool speaking) {
-        voice_detected_ = speaking;
-        if (callbacks_.on_vad_change) {
-            callbacks_.on_vad_change(speaking);
-        }
-    });
+    CreateAudioProcessor();
 
     esp_timer_create_args_t audio_power_timer_args = {
         .callback = [](void* arg) {
@@ -174,6 +159,25 @@ void AudioService::Start() {
     }, "opus_codec", 2048 * 12, this, 2, &opus_codec_task_handle_) != pdPASS) {
         ESP_LOGE(TAG, "Failed to create opus_codec task");
     }
+}
+
+void AudioService::CreateAudioProcessor() {
+#if CONFIG_USE_AUDIO_PROCESSOR
+    audio_processor_ = std::make_unique<AfeAudioProcessor>();
+#else
+    audio_processor_ = std::make_unique<NoAudioProcessor>();
+#endif
+
+    audio_processor_->OnOutput([this](std::vector<int16_t>&& data) {
+        PushTaskToEncodeQueue(kAudioTaskTypeEncodeToSendQueue, std::move(data));
+    });
+
+    audio_processor_->OnVadStateChange([this](bool speaking) {
+        voice_detected_ = speaking;
+        if (callbacks_.on_vad_change) {
+            callbacks_.on_vad_change(speaking);
+        }
+    });
 }
 
 void AudioService::Stop() {
@@ -280,7 +284,8 @@ void AudioService::AudioInputTask() {
             int samples = 160; // 10ms
             std::vector<int16_t> data;
             if (ReadAudioData(data, 16000, samples)) {
-                if (bits & AS_EVENT_WAKE_WORD_RUNNING) {
+                std::lock_guard<std::mutex> lock(models_mutex_);
+                if ((bits & AS_EVENT_WAKE_WORD_RUNNING) && wake_word_) {
                     wake_word_->Feed(data);
                 }
                 if (bits & AS_EVENT_AUDIO_PROCESSOR_RUNNING) {
@@ -707,7 +712,23 @@ void AudioService::CheckAndUpdateAudioPowerState() {
     }
 }
 
+void AudioService::ReleaseModels() {
+    EnableWakeWordDetection(false);
+    EnableVoiceProcessing(false);
+    // Let the AFE tasks drain before their objects are destroyed
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+    std::lock_guard<std::mutex> lock(models_mutex_);
+    // The wake word owns and frees the model list it was initialized with
+    wake_word_.reset();
+    wake_word_initialized_ = false;
+    CreateAudioProcessor();
+    audio_processor_initialized_ = false;
+    models_list_ = nullptr;
+}
+
 void AudioService::SetModelsList(srmodel_list_t* models_list) {
+    std::lock_guard<std::mutex> lock(models_mutex_);
     models_list_ = models_list;
 
 #if CONFIG_IDF_TARGET_ESP32S3 || CONFIG_IDF_TARGET_ESP32P4

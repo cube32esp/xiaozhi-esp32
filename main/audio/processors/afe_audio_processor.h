@@ -10,6 +10,7 @@
 #include <vector>
 #include <functional>
 #include <mutex>
+#include <atomic>
 
 #include "audio_processor.h"
 #include "audio_codec.h"
@@ -31,6 +32,9 @@ public:
 
 private:
     EventGroupHandle_t event_group_ = nullptr;
+    // CUBE32: lets the destructor stop the task (the processor is recreated around a data OTA)
+    std::atomic<bool> exit_requested_{false};
+    bool task_started_ = false;
     const esp_afe_sr_iface_t* afe_iface_ = nullptr;
     esp_afe_sr_data_t* afe_data_ = nullptr;
     std::function<void(std::vector<int16_t>&& data)> output_callback_;
