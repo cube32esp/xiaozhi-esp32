@@ -74,6 +74,8 @@ CONFIG_CUBE32_BLE_OTA_MTU_SIZE=512
 # is chosen it follows CUBE32_MODEM_RUNTIME_DEFAULT_CONN in the BSP (USB).
 CONFIG_CUBE32_MODEM_ENABLED=y
 CONFIG_CUBE32_MODEM_CONNECTION_RUNTIME=y
+# The modem needs at least 3 minutes to register; allow up to 5 minutes (BSP max).
+CONFIG_CUBE32_MODEM_NETWORK_TIMEOUT_MS=300000
 CONFIG_CUBE32_ROBOT_HEAD_ENABLED=n
 # Face expression mode enabled; runtime default is chat UI.
 # Switch at runtime via MCP tool "self.cube32.set_display_mode".

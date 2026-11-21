@@ -16,7 +16,7 @@
 
 // Maximum polling durations (each tick = 1 second)
 static constexpr int MODEM_INIT_TIMEOUT_S    = 60;
-static constexpr int MODEM_NETWORK_TIMEOUT_S = 60;
+static constexpr int MODEM_NETWORK_TIMEOUT_S = 300;  // keep in sync with CONFIG_CUBE32_MODEM_NETWORK_TIMEOUT_MS
 static constexpr int MODEM_PPP_TIMEOUT_S     = 30;
 
 // ---------------------------------------------------------------------------
